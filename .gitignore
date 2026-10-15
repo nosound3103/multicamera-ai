@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+
+# Environment
+.env
+.env.*
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# Runtime
+logs/
+storage/
+
+# Model weights
+*.pt
+*.onnx
+
+# Video files
+*.mp4
+*.avi
+*.mkv
