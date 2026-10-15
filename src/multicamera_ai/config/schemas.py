@@ -43,6 +43,11 @@ class CountingLine(StrictModel):
     start: Point
     end: Point
 
+    in_direction: Literal[
+        "negative_to_positive",
+        "positive_to_negative",
+    ] = "negative_to_positive"
+
     @model_validator(mode="after")
     def validate_line(self) -> Self:
         if self.start == self.end:
