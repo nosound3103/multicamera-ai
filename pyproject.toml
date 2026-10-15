@@ -13,6 +13,12 @@ dependencies = [
     "pyyaml>=6.0.3",
 ]
 
+[project.optional-dependencies]
+vision = [
+    "opencv-python-headless>=5.0.0.93",
+    "ultralytics>=8.4.177",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
