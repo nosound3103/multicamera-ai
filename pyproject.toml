@@ -16,3 +16,25 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E4",  # Import errors
+    "E7",  # Statement errors
+    "E9",  # Syntax errors
+    "F",   # Pyflakes
+    "I",   # Import sorting
+    "B",   # Common bugs
+    "UP",  # Modern Python syntax
+]
