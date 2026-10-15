@@ -1,9 +1,3 @@
-"""Geometry utilities for multi-camera video analytics.
-
-All points use (x, y) coordinates.
-In image coordinates, the Y axis increases downward.
-"""
-
 from collections.abc import Sequence
 from math import isfinite
 from typing import Literal
