@@ -1,0 +1,69 @@
+model:
+  weights: yolo26n.pt
+  device: "0"
+  confidence: 0.5
+  imgsz: 320
+  class_ids:
+  - 0
+  - 2
+  - 3
+  - 5
+  - 7
+  cpu_threads: 1
+cameras:
+- id: cam1
+  enabled: true
+  source:
+    type: rtsp
+    uri: rtsp://127.0.0.1:8554/input_cam1
+  output_url: rtsp://127.0.0.1:8554/output_cam1
+  lines:
+  - id: in_entrance
+    start:
+      x: 0.44039508
+      y: 0.34259601
+    end:
+      x: 0.51602815
+      y: 0.34146065
+  - id: out_entrance
+    start:
+      x: 0.5166664
+      y: 0.34146065
+    end:
+      x: 0.5843213
+      y: 0.34146065
+  zones:
+  - id: restricted_area
+    points:
+    - x: 0.34836244
+      y: 0.67326019
+    - x: 0.72441105
+      y: 0.66880329
+    - x: 0.86039059
+      y: 1.0
+    - x: 0.26239593
+      y: 1.0
+- id: cam2
+  enabled: true
+  source:
+    type: rtsp
+    uri: rtsp://127.0.0.1:8554/input_cam2
+  output_url: rtsp://127.0.0.1:8554/output_cam2
+  lines: []
+  zones: []
+- id: cam3
+  enabled: true
+  source:
+    type: rtsp
+    uri: rtsp://127.0.0.1:8554/input_cam3
+  output_url: rtsp://127.0.0.1:8554/output_cam3
+  lines: []
+  zones: []
+- id: cam4
+  enabled: true
+  source:
+    type: rtsp
+    uri: rtsp://127.0.0.1:8554/input_cam4
+  output_url: rtsp://127.0.0.1:8554/output_cam4
+  lines: []
+  zones: []

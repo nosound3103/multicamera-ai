@@ -1,8 +1,8 @@
 """Benchmark identical pipelines in thread/process modes with RTSP output probes.
 
 Requires a running MediaMTX and live/replayed input(s). JSON includes raw per-camera
-latency samples, status, hardware, memory and CPU. Capture-to-decode latency starts
-AFTER OpenCV read, so it excludes source/decoder input buffering.
+latency samples, status, hardware, memory and CPU. With --source-watermark, latency
+starts at replay capture; otherwise it starts AFTER the pipeline's OpenCV read.
 """
 
 import argparse
@@ -106,8 +106,8 @@ def run(config, count, mode, args):
         else:
             logging.error("Not all camera outputs ready after 30s; recording degraded run")
         time.sleep(args.warmup)
-        ready.set()
         started = time.monotonic()
+        ready.set()
         while time.monotonic() - started < args.seconds:
             processes = [parent] + parent.children(recursive=True)
             rss, cpu = 0, 0
@@ -120,6 +120,7 @@ def run(config, count, mode, args):
             resources.append({"at": time.monotonic(), "rss_bytes": rss, "cpu_seconds": cpu})
             time.sleep(1)
         ready.clear()
+        ended = time.monotonic()
         status = service.status()
     finally:
         stop.set()
@@ -127,9 +128,11 @@ def run(config, count, mode, args):
         for thread in threads:
             thread.join(7)
     cameras = {}
+    elapsed = ended - started
     for camera_id, values in samples.items():
+        values = [v for v in values if started <= v[0] <= ended]
         latency = [v[1] for v in values]
-        fps = len(values) / args.seconds
+        fps = len(values) / elapsed
         cameras[camera_id] = {
             "decoded_unique_fps": fps,
             "frames": len(values),
@@ -149,6 +152,7 @@ def run(config, count, mode, args):
         "execution": mode,
         "camera_count": count,
         "seconds": args.seconds,
+        "measured_seconds": elapsed,
         "warmup_seconds": args.warmup,
         "cameras": cameras,
         "status": status,
@@ -181,6 +185,17 @@ def main():
     if min(args.counts) < 1 or args.seconds < 1 or args.warmup < 0:
         parser.error("Counts/seconds must be positive and warmup nonnegative")
     config = load_config(args.config)
+    import torch
+
+    gpu = None
+    if torch.cuda.is_available():
+        properties = torch.cuda.get_device_properties(0)
+        gpu = {
+            "name": properties.name,
+            "vram_bytes": properties.total_memory,
+            "compute_capability": list(torch.cuda.get_device_capability(0)),
+            "torch_cuda_version": torch.version.cuda,
+        }
     configure_logging(config.runtime.log_dir, "benchmark")
     path = Path(args.output)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -190,6 +205,7 @@ def main():
         "processor": platform.processor(),
         "logical_cpus": psutil.cpu_count(),
         "ram_bytes": psutil.virtual_memory().total,
+        "gpu": gpu,
         "model": config.model.model_dump(),
         "streaming": config.streaming.model_dump() | {"enabled": True, "watermark": True},
         "input_source_override": args.source,
