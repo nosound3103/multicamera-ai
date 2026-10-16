@@ -37,3 +37,41 @@ jobs:
 
       - name: Run unit tests
         run: uv run --no-sync pytest -v
+
+  docker:
+    name: Docker CPU smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate Compose definitions
+        run: |
+          docker compose config --quiet
+          docker compose -f compose.yaml -f compose.gpu.yaml config --quiet
+
+      - name: Build CPU image
+        run: docker build --tag multi-camera-ai:ci .
+
+      - name: Check runtime dependencies and config
+        run: |
+          docker run --rm multi-camera-ai:ci --check
+          docker run --rm --entrypoint python multi-camera-ai:ci -c "import torch, cv2, ultralytics, shutil; assert not torch.cuda.is_available(); assert shutil.which('ffmpeg')"
+
+      - name: Check API and SIGTERM shutdown
+        run: |
+          mkdir -p /tmp/multicamera-config
+          docker run --rm --entrypoint python -v /tmp/multicamera-config:/output multi-camera-ai:ci -c "from pathlib import Path; import yaml; p=yaml.safe_load(Path('config/cameras.docker.yaml').read_text()); [c.update(enabled=False) for c in p['cameras']]; Path('/output/smoke.yaml').write_text(yaml.safe_dump(p))"
+          docker run -d --name multicamera-smoke -p 8000:8000 -v /tmp/multicamera-config:/config:ro multi-camera-ai:ci --config /config/smoke.yaml
+          for attempt in $(seq 1 30); do
+            if curl --fail http://localhost:8000/health; then break; fi
+            sleep 1
+          done
+          curl --fail http://localhost:8000/health
+          docker stop --time 20 multicamera-smoke
+          docker logs multicamera-smoke 2>&1 | tee /tmp/multicamera-smoke.log
+          grep -q 'Application shutdown complete' /tmp/multicamera-smoke.log
+
+      - name: Clean up smoke container
+        if: always()
+        run: docker rm -f multicamera-smoke || true
