@@ -18,10 +18,21 @@ dependencies = [
 
 [project.optional-dependencies]
 vision = [
+    "torch==2.10.0",
+    "torchvision==0.25.0",
     "lap>=0.5.12",
     "opencv-python-headless>=5.0.0.93",
     "ultralytics>=8.4.177",
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
