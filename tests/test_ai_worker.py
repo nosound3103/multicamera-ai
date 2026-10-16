@@ -312,4 +312,4 @@ def test_yolo_factory_reapplies_cpu_budget_after_backend_setup(monkeypatch):
     assert _make_yolo("fake.pt", cpu_threads=2) is fake_model
     callbacks["on_predict_start"](SimpleNamespace(device=SimpleNamespace(type="cpu")))
     callbacks["on_predict_start"](SimpleNamespace(device=SimpleNamespace(type="cuda")))
-    assert budgets == [2]
+    assert budgets == [2, 2, 2]

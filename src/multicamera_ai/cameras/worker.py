@@ -67,6 +67,9 @@ def opencv_capture_factory(source: str | int) -> Capture:
     """
     import cv2
 
+    # Each camera already has its own workers; nested OpenCV thread pools
+    # otherwise compete with inference, encoders and output decode probes.
+    cv2.setNumThreads(1)
     if isinstance(source, str) and source.lower().startswith(("rtsp://", "rtsps://")):
         os.environ.setdefault(
             "OPENCV_FFMPEG_CAPTURE_OPTIONS",

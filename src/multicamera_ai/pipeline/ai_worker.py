@@ -46,12 +46,13 @@ def _make_yolo(weights: str, cpu_threads: int = 1) -> TrackingModel:
     import torch
     from ultralytics import YOLO
 
+    torch.set_num_threads(cpu_threads)
     model = YOLO(weights)
 
     def limit_cpu_threads(predictor):
-        # Ultralytics selects its own thread count when setting up a CPU backend.
-        # This public callback runs after setup and before inference/warmup.
-        if predictor.device.type == "cpu" and torch.get_num_threads() != cpu_threads:
+        # CUDA inference still has CPU tensor preprocessing. Bound both backends
+        # so concurrent cameras do not each saturate the host's CPU cores.
+        if torch.get_num_threads() != cpu_threads:
             torch.set_num_threads(cpu_threads)
 
     model.add_callback("on_predict_start", limit_cpu_threads)
