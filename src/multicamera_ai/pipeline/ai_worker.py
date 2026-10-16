@@ -42,10 +42,20 @@ class TrackingModel(Protocol):
 ModelFactory = Callable[[str], TrackingModel]
 
 
-def _make_yolo(weights: str) -> TrackingModel:
+def _make_yolo(weights: str, cpu_threads: int = 1) -> TrackingModel:
+    import torch
     from ultralytics import YOLO
 
-    return YOLO(weights)
+    model = YOLO(weights)
+
+    def limit_cpu_threads(predictor):
+        # Ultralytics selects its own thread count when setting up a CPU backend.
+        # This public callback runs after setup and before inference/warmup.
+        if predictor.device.type == "cpu" and torch.get_num_threads() != cpu_threads:
+            torch.set_num_threads(cpu_threads)
+
+    model.add_callback("on_predict_start", limit_cpu_threads)
+    return model
 
 
 class AIState(StrEnum):
@@ -240,7 +250,10 @@ class AIWorker:
         # A new session means new ByteTrack ID namespace. Rebuild YOLO rather
         # than reusing an Ultralytics predictor/tracker from the old stream.
         if packet.session_id != self._session_id:
-            self._model = self.model_factory(self.model_config.weights)
+            if self.model_factory is _make_yolo:
+                self._model = _make_yolo(self.model_config.weights, self.model_config.cpu_threads)
+            else:
+                self._model = self.model_factory(self.model_config.weights)
             self._engine = EventEngine(self.camera.id)
             self._session_id = packet.session_id
             self._session_frame_index = 0

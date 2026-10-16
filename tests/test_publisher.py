@@ -96,3 +96,10 @@ def test_stale_frames_are_dropped_before_encoding(monkeypatch):
     time.sleep(0.1)
     assert publisher.stop()
     assert publisher.status()["frames"] == 0
+
+
+def test_equal_clock_samples_do_not_crash_status():
+    publisher = RTSPPublisher("cam1", "rtsp://localhost/out", Source(), StreamingConfig())
+    now = time.monotonic()
+    publisher._times.extend([now, now])
+    assert publisher.status()["input_fps"] == 0

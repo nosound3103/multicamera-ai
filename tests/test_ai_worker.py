@@ -292,3 +292,24 @@ def test_real_opencv_mp4_capture_to_ai_worker(tmp_path):
     finally:
         assert worker.stop(timeout=2)
         assert capture.stop(timeout=2)
+
+
+def test_yolo_factory_reapplies_cpu_budget_after_backend_setup(monkeypatch):
+    import sys
+
+    from multicamera_ai.pipeline.ai_worker import _make_yolo
+
+    callbacks, budgets = {}, []
+    fake_model = SimpleNamespace(
+        add_callback=lambda name, callback: callbacks.update({name: callback})
+    )
+    monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=lambda _: fake_model))
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(get_num_threads=lambda: 8, set_num_threads=budgets.append),
+    )
+    assert _make_yolo("fake.pt", cpu_threads=2) is fake_model
+    callbacks["on_predict_start"](SimpleNamespace(device=SimpleNamespace(type="cpu")))
+    callbacks["on_predict_start"](SimpleNamespace(device=SimpleNamespace(type="cuda")))
+    assert budgets == [2]

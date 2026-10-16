@@ -41,7 +41,9 @@ class RTSPPublisher:
         with self._lock:
             fps = 0.0
             if len(self._times) > 1 and time.monotonic() - self._times[-1] < 2:
-                fps = (len(self._times) - 1) / (self._times[-1] - self._times[0])
+                span = self._times[-1] - self._times[0]
+                if span > 0:
+                    fps = (len(self._times) - 1) / span
             return {
                 "frames": self._frames,
                 "input_fps": fps,
@@ -167,6 +169,9 @@ class RTSPPublisher:
                     with self._lock:
                         process = self._process
                     if process is None or process.poll() is not None:
+                        if process is not None:
+                            with self._lock:
+                                self._restarts += 1
                         self._dispose()
                         process = self._spawn()
                         with self._lock:
@@ -189,7 +194,7 @@ class RTSPPublisher:
                             datetime.now(UTC) - packet.captured_at
                         ).total_seconds() * 1000
                         self._last_error = None
-                    deadline = time.monotonic() + 1 / self.config.fps
+                    deadline = max(deadline + 1 / self.config.fps, time.monotonic())
                 except (OSError, ValueError) as exc:
                     with self._lock:
                         self._last_error = type(exc).__name__

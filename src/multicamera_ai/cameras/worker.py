@@ -70,7 +70,8 @@ def opencv_capture_factory(source: str | int) -> Capture:
     if isinstance(source, str) and source.lower().startswith(("rtsp://", "rtsps://")):
         os.environ.setdefault(
             "OPENCV_FFMPEG_CAPTURE_OPTIONS",
-            "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|max_delay;0|reorder_queue_size;0",
+            "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|max_delay;0|reorder_queue_size;0"
+            "|analyzeduration;100000|probesize;32768",
         )
         return cv2.VideoCapture(
             source,
