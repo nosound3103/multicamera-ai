@@ -154,6 +154,11 @@ def run_demo(args: argparse.Namespace) -> None:
             raise ValueError("Video source requires uri")
         source = camera.source.uri
 
+    if isinstance(source, str) and "://" not in source:
+        source = str(Path(source).expanduser().resolve())
+        if not Path(source).is_file():
+            raise FileNotFoundError(f"Input video not found: {source}")
+
     output_path = Path(args.output)
     if isinstance(source, str) and "://" not in source:
         if Path(source).resolve() == output_path.resolve():

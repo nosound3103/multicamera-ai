@@ -144,3 +144,32 @@ def test_example_has_four_cameras():
     config = load_config(root / "config" / "cameras.yaml")
 
     assert len(config.cameras) == 4
+
+
+def test_local_configuration_preserves_deployment_settings(monkeypatch, tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    deployment = load_config(root / "config/cameras.yaml")
+    local = load_config(root / "config/cameras.local.yaml")
+    assert local.model == deployment.model
+    assert len(local.cameras) >= 4
+    for original, camera in zip(deployment.cameras, local.cameras, strict=True):
+        assert camera.enabled
+        assert camera.id == original.id
+        assert camera.lines == original.lines
+        assert camera.zones == original.zones
+        assert camera.output_url == original.output_url
+        assert camera.source.type == "file"
+        assert Path(camera.source.uri).is_absolute()
+        # Media is gitignored and may be absent on CI; opening validates existence.
+        assert Path(camera.source.uri).parent == root / "assets"
+
+
+def test_file_path_resolves_relative_to_yaml(valid_data, tmp_path, monkeypatch):
+    folder = tmp_path / "config"
+    folder.mkdir()
+    valid_data["cameras"][0]["source"] = {"type": "file", "uri": "../video.mp4"}
+    path = folder / "local.yaml"
+    path.write_text(yaml.safe_dump(valid_data), encoding="utf-8")
+    monkeypatch.chdir(folder)
+    assert load_config(path).cameras[0].source.uri == str(tmp_path / "video.mp4")
