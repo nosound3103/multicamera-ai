@@ -39,3 +39,6 @@ assets/
 
 # Generated previews and annotated outputs
 artifacts/
+
+# Generated measurements stay local; scripts default to artifacts/.
+benchmarks/
