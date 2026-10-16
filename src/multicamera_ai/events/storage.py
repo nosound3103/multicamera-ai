@@ -20,6 +20,7 @@ class SQLiteEventStore:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
             with connection:
                 connection.execute(
                     """
@@ -49,7 +50,7 @@ class SQLiteEventStore:
                 )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path, timeout=10.0)
+        connection = sqlite3.connect(self.db_path, timeout=1.0)
         connection.row_factory = sqlite3.Row
         return connection
 
