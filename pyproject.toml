@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 vision = [
+    "lap>=0.5.12",
     "opencv-python-headless>=5.0.0.93",
     "ultralytics>=8.4.177",
 ]

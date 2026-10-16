@@ -27,7 +27,15 @@ def load_config(path: str | Path) -> AppConfig:
         raise ConfigError(f"Config '{config_path}' must contain a YAML mapping")
 
     try:
-        return AppConfig.model_validate(data)
+        config = AppConfig.model_validate(data)
+        # YAML file paths are relative to the YAML directory, never the process cwd.
+        for camera in config.cameras:
+            if camera.source.type == "file" and camera.source.uri:
+                source_path = Path(camera.source.uri).expanduser()
+                if not source_path.is_absolute():
+                    source_path = config_path.resolve().parent / source_path
+                camera.source.uri = str(source_path.resolve())
+        return config
     except ValidationError as exc:
         details = []
 

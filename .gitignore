@@ -36,3 +36,6 @@ assets/
 *.avi
 *.mkv
 
+
+# Generated previews and annotated outputs
+artifacts/
