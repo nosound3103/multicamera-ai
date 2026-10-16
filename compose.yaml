@@ -1,0 +1,73 @@
+name: multi-camera-ai
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.2
+    ports:
+      - "8554:8554"
+    environment:
+      MTX_RTSPTRANSPORTS: tcp
+    restart: unless-stopped
+
+  ai:
+    image: multi-camera-ai:cpu
+    build:
+      context: .
+      args:
+        TORCH_BACKEND: cpu
+    init: true
+    depends_on:
+      - mediamtx
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config:/app/config:ro
+      - ./assets:/app/assets:ro
+      - ./storage:/app/storage
+      - ./logs:/app/logs
+      - type: bind
+        source: ./yolo26n.pt
+        target: /app/yolo26n.pt
+        read_only: true
+        bind:
+          create_host_path: false
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  replay:
+    image: multi-camera-ai:cpu
+    profiles: [demo]
+    init: true
+    healthcheck:
+      disable: true
+    depends_on:
+      - mediamtx
+    entrypoint: ["python", "scripts/replay.py"]
+    volumes:
+      - ./assets:/app/assets:ro
+    command: ["--input", "assets/people-walking.mp4", "--count", "4", "--server", "rtsp://mediamtx:8554", "--watermark"]
+    stop_grace_period: 15s
+    stop_signal: SIGINT
+
+  benchmark:
+    image: multi-camera-ai:cpu
+    profiles: [benchmark]
+    init: true
+    healthcheck:
+      disable: true
+    depends_on:
+      - mediamtx
+    entrypoint: ["python", "scripts/benchmark.py"]
+    volumes:
+      - ./config:/app/config:ro
+      - ./artifacts:/app/artifacts
+      - ./storage:/app/storage
+      - ./logs:/app/logs
+      - type: bind
+        source: ./yolo26n.pt
+        target: /app/yolo26n.pt
+        read_only: true
+        bind:
+          create_host_path: false
+    command: ["--config", "config/cameras.docker.yaml", "--counts", "1", "2", "3", "4", "--modes", "processes", "--source-watermark", "--server", "rtsp://mediamtx:8554", "--output", "artifacts/docker-benchmark/results.json"]
+    stop_grace_period: 60s
+    stop_signal: SIGINT
