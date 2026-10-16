@@ -94,6 +94,7 @@ class CameraWorker:
         source: str | int,
         *,
         is_file: bool = False,
+        timestamp_watermark: bool = False,
         reconnect_delay: float = 1.0,
         file_realtime: bool = True,
         capture_factory: CaptureFactory | None = None,
@@ -113,6 +114,7 @@ class CameraWorker:
 
         self.camera_id = camera_id
         self.source = source
+        self.timestamp_watermark = timestamp_watermark
         self.is_file = is_file
         self.reconnect_delay = reconnect_delay
         self.file_realtime = file_realtime
@@ -209,7 +211,7 @@ class CameraWorker:
             fps = 0.0
             if self._state == CameraState.RUNNING and len(self._recent_frame_times) >= 2:
                 span = self._recent_frame_times[-1] - self._recent_frame_times[0]
-                if span > 0:
+                if span > 0 and time.monotonic() - self._recent_frame_times[-1] < 2.0:
                     fps = (len(self._recent_frame_times) - 1) / span
             return CameraStatus(
                 camera_id=self.camera_id,
@@ -275,6 +277,13 @@ class CameraWorker:
                             raise OSError("capture read failed")
 
                         captured_at = datetime.now(UTC)
+                        if self.timestamp_watermark:
+                            from multicamera_ai.telemetry import read_stamp
+
+                            stamp = read_stamp(frame)
+                            if stamp is None:
+                                raise ValueError("Source timestamp watermark missing or corrupt")
+                            captured_at = stamp[0]
                         with self._condition:
                             self._sequence += 1
                             self._recent_frame_times.append(time.monotonic())

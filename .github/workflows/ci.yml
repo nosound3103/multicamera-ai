@@ -27,7 +27,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --locked --dev
+        run: uv sync --locked --dev --extra vision
 
       - name: Check lint
         run: uv run --no-sync ruff check .

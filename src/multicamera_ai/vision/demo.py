@@ -37,7 +37,8 @@ def project_regions(camera, width: int, height: int):
             id=line.id,
             start=normalized_to_pixel((line.start.x, line.start.y), width, height),
             end=normalized_to_pixel((line.end.x, line.end.y), width, height),
-            count_as=LANE_DIRECTIONS[line.id],
+            count_as=LANE_DIRECTIONS.get(line.id, "IN"),
+            in_direction=getattr(line, "in_direction", "negative_to_positive"),
         )
         for line in camera.lines
     ]

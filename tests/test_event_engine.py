@@ -117,7 +117,7 @@ def test_cooldown_prevents_duplicate_crossing():
     assert len(tick(engine, 7, (3, (20, 30)), zones=())) == 1
 
 
-def test_shared_cooldown_across_lanes():
+def test_lines_have_independent_cooldowns():
     engine = EventEngine("cam1")
 
     tick(engine, 1, (4, (20, 30)), zones=())
@@ -125,9 +125,10 @@ def test_shared_cooldown_across_lanes():
 
     tick(engine, 3, (4, (80, 70)), zones=())
 
-    # Same track cannot be immediately counted again
-    # on the other lane.
-    assert tick(engine, 4, (4, (80, 30)), zones=()) == []
+    # Separate physical lines must not suppress each other.
+    events = tick(engine, 4, (4, (80, 30)), zones=())
+    assert len(events) == 1
+    assert events[0].direction == "OUT"
 
 
 def test_tracks_have_independent_states():
@@ -319,3 +320,28 @@ def test_negative_track_id_is_rejected():
 
     with pytest.raises(ValueError, match="non-negative"):
         tick(engine, 1, (-1, (20, 20)))
+
+
+@pytest.mark.parametrize("ys,expected", [([30, 70], "IN"), ([70, 30], "OUT")])
+def test_same_line_counts_both_directions(ys, expected):
+    engine = EventEngine("cam1")
+    tick(engine, 1, (1, (20, ys[0])), lines=(IN_LINE,), zones=())
+    events = tick(engine, 2, (1, (20, ys[1])), lines=(IN_LINE,), zones=())
+    assert [e.direction for e in events] == [expected]
+
+
+def test_configured_in_direction_is_respected():
+    line = CountLine("gate", (0, 50), (100, 50), in_direction="positive_to_negative")
+    engine = EventEngine("cam1")
+    tick(engine, 1, (1, (20, 70)), lines=(line,), zones=())
+    assert tick(engine, 2, (1, (20, 30)), lines=(line,), zones=())[0].direction == "IN"
+
+
+def test_zone_occlusion_does_not_duplicate_confirmed_entry():
+    engine = EventEngine("cam1")
+    for i in range(1, 4):
+        tick(engine, i, (1, (20, 20)), lines=())
+    for i in range(4, 10):
+        tick(engine, i, lines=())
+    for i in range(10, 14):
+        assert tick(engine, i, (1, (20, 20)), lines=()) == []

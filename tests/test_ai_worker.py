@@ -251,17 +251,12 @@ def test_threaded_model_error_reports_status_without_leaking_url(tmp_path):
     worker.stop()
 
 
-def test_missing_region_labels_rejected(tmp_path):
+def test_arbitrary_or_empty_regions_supported(tmp_path):
     worker, _, _, _ = make_worker(tmp_path)
-    bad = make_camera()
-    bad.lines = bad.lines[:1]
-    with pytest.raises(ValueError, match="in_entrance"):
-        AIWorker(
-            camera=bad,
-            model_config=worker.model_config,
-            source=worker.source,
-            recorder=worker.recorder,
-        )
+    worker.camera.lines = []
+    worker.camera.zones = []
+    worker.process_packet(packet(1, 0))
+    assert worker.latest() is not None
 
 
 def test_real_opencv_mp4_capture_to_ai_worker(tmp_path):

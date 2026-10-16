@@ -338,8 +338,9 @@ def test_stop_restart_and_running_fps():
     worker = CameraWorker("cam1", 0, capture_factory=factory)
     worker.start()
     try:
-        assert wait_until(lambda: worker.status().frames_received >= 3)
-        assert 0 < worker.status().capture_fps < 1000
+        assert wait_until(
+            lambda: worker.status().frames_received >= 3 and 0 < worker.status().capture_fps < 1000
+        )
         first_sequence = worker.get_latest().sequence
         worker.start()  # Active start is idempotent.
         assert len(captures) == 1

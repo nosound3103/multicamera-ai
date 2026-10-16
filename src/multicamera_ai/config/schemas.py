@@ -77,6 +77,7 @@ class ForbiddenZone(StrictModel):
 
 
 class VideoSource(StrictModel):
+    timestamp_watermark: bool = False
     type: Literal["rtsp", "file", "webcam"]
     uri: str | None = None
     index: int | None = Field(default=None, ge=0)
@@ -148,7 +149,32 @@ class CameraConfig(StrictModel):
         return self
 
 
+class RuntimeConfig(StrictModel):
+    execution: Literal["threads", "processes"] = "threads"
+    database: str = "storage/events.db"
+    snapshots: str = "storage/snapshots"
+    log_dir: str = "logs"
+    reconnect_delay: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    shutdown_timeout: float = Field(default=12.0, gt=0, allow_inf_nan=False)
+    event_queue_size: int = Field(default=8, ge=1)
+    host: str = "0.0.0.0"
+    port: int = Field(default=8000, ge=1, le=65535)
+
+
+class StreamingConfig(StrictModel):
+    enabled: bool = True
+    ffmpeg: str = "ffmpeg"
+    fps: int = Field(default=15, ge=1, le=120)
+    width: int = Field(default=960, ge=640, le=3840, multiple_of=2)
+    height: int = Field(default=540, ge=120, le=2160, multiple_of=2)
+    write_timeout: float = Field(default=3.0, gt=0, allow_inf_nan=False)
+    max_frame_age: float = Field(default=0.8, gt=0, allow_inf_nan=False)
+    watermark: bool = False
+
+
 class AppConfig(StrictModel):
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    streaming: StreamingConfig = Field(default_factory=StreamingConfig)
     model: YOLOConfig
     cameras: list[CameraConfig] = Field(min_length=1)
 

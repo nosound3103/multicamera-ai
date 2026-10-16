@@ -11,8 +11,6 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ultralytics import YOLO
-
 from multicamera_ai.cameras.worker import CameraState, FramePacket
 from multicamera_ai.events import (
     EventEngine,
@@ -25,8 +23,6 @@ if TYPE_CHECKING:
     from multicamera_ai.events.recorder import EventRecorder
 
 logger = logging.getLogger(__name__)
-
-LANE_LABELS = {"in_entrance": "IN", "out_entrance": "OUT"}
 
 
 class FrameSource(Protocol):
@@ -47,6 +43,8 @@ ModelFactory = Callable[[str], TrackingModel]
 
 
 def _make_yolo(weights: str) -> TrackingModel:
+    from ultralytics import YOLO
+
     return YOLO(weights)
 
 
@@ -76,6 +74,7 @@ class AIStatus:
     skipped_capture_frames: int
     processing_fps: float
     inference_ms: float
+    capture_to_ai_ms: float
     session_id: int | None
     last_processed_at: datetime | None
     counts: dict[str, int]
@@ -104,9 +103,6 @@ class AIWorker:
             raise ValueError("camera.id cannot be empty")
         if not math.isfinite(poll_timeout) or poll_timeout <= 0:
             raise ValueError("poll_timeout must be positive and finite")
-        ids = {line.id for line in camera.lines}
-        if ids != set(LANE_LABELS) or len(camera.lines) != len(LANE_LABELS):
-            raise ValueError("Camera requires in_entrance and out_entrance lines")
 
         self.camera = camera
         self.model_config = model_config
@@ -133,6 +129,7 @@ class AIWorker:
         self._skipped_frames = 0
         self._saved_events = 0
         self._counts = {"IN": 0, "OUT": 0}
+        self._capture_to_ai_ms = 0.0
         self._inference_ms = 0.0
         self._last_processed_at: datetime | None = None
         self._frame_times: deque[float] = deque(maxlen=50)
@@ -203,7 +200,11 @@ class AIWorker:
     def status(self) -> AIStatus:
         with self._condition:
             fps = 0.0
-            if len(self._frame_times) >= 2:
+            if (
+                self._state == AIState.RUNNING
+                and len(self._frame_times) >= 2
+                and time.perf_counter() - self._frame_times[-1] < 2.0
+            ):
                 elapsed = self._frame_times[-1] - self._frame_times[0]
                 if elapsed > 0:
                     fps = (len(self._frame_times) - 1) / elapsed
@@ -214,6 +215,7 @@ class AIWorker:
                 skipped_capture_frames=self._skipped_frames,
                 processing_fps=fps,
                 inference_ms=self._inference_ms,
+                capture_to_ai_ms=self._capture_to_ai_ms,
                 session_id=self._session_id,
                 last_processed_at=self._last_processed_at,
                 counts=self._counts.copy(),
@@ -314,11 +316,13 @@ class AIWorker:
                 )
 
         # Snapshots show regions and bounding boxes. Counters reflect only
-        # successfully persisted events, so draw HUD after recorder calls.
+        # accepted events (async persistence status is reported separately).
         for event in events:
             # Capture timestamp, not time when inference happened to complete.
             event = event.model_copy(update={"occurred_at": packet.captured_at})
-            self.recorder.record(event, annotated)
+            recorded = self.recorder.record(event, annotated)
+            if recorded is False:
+                continue
             with self._condition:
                 self._saved_events += 1
                 if event.event_type == EventType.LINE_CROSSING:
@@ -336,6 +340,7 @@ class AIWorker:
         )
         with self._condition:
             self._processed_frames += 1
+            self._capture_to_ai_ms = (datetime.now(UTC) - packet.captured_at).total_seconds() * 1000
             self._inference_ms = inference_ms
             self._last_processed_at = datetime.now(UTC)
             self._frame_times.append(time.perf_counter())

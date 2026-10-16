@@ -5,6 +5,7 @@ from typing import Literal
 
 from multicamera_ai.events.models import Event, EventType
 from multicamera_ai.vision.geometry import (
+    CrossingDirection,
     Point2D,
     cross_product,
     crossing_direction,
@@ -24,7 +25,8 @@ class CountLine:
     id: str
     start: Point2D
     end: Point2D
-    count_as: Literal["IN", "OUT"]
+    count_as: Literal["IN", "OUT"] = "IN"
+    in_direction: CrossingDirection = "negative_to_positive"
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +38,7 @@ class RestrictedZone:
 @dataclass(slots=True)
 class _LineState:
     stable_point: Point2D | None = None
+    last_count_frame: int | None = None
 
 
 @dataclass(slots=True)
@@ -48,7 +51,6 @@ class _ZoneState:
 @dataclass(slots=True)
 class _TrackState:
     last_seen: int
-    last_count_frame: int | None = None
     lines: dict[str, _LineState] = field(default_factory=dict)
     zones: dict[str, _ZoneState] = field(default_factory=dict)
 
@@ -158,11 +160,17 @@ class EventEngine:
         for item in detections:
             state = self._tracks.get(item.track_id)
 
-            if state is None or (frame_index - state.last_seen > self.max_observation_gap_frames):
+            if state is None:
                 # Do not connect positions separated
                 # by a large gap in tracking.
                 state = _TrackState(last_seen=frame_index)
                 self._tracks[item.track_id] = state
+            elif frame_index - state.last_seen > self.max_observation_gap_frames:
+                # Forget motion across an occlusion, but keep confirmed zone occupancy.
+                state.lines.clear()
+                for zone_state in state.zones.values():
+                    zone_state.inside_streak = 0
+                    zone_state.outside_streak = 0
 
             # --------------------------------------
             # 3. Counting lines
@@ -216,8 +224,9 @@ class EventEngine:
                         )
 
                         cooldown_over = (
-                            state.last_count_frame is None
-                            or frame_index - state.last_count_frame >= self.line_cooldown_frames
+                            line_state.last_count_frame is None
+                            or frame_index - line_state.last_count_frame
+                            >= self.line_cooldown_frames
                         )
 
                         if crossed is not None and cooldown_over:
@@ -227,12 +236,12 @@ class EventEngine:
                                     track_id=item.track_id,
                                     event_type=EventType.LINE_CROSSING,
                                     region_id=line.id,
-                                    direction=line.count_as,
+                                    direction="IN" if crossed == line.in_direction else "OUT",
                                 )
                             )
 
-                            # Shared cooldown across IN and OUT.
-                            state.last_count_frame = frame_index
+                            # Debounce each line independently.
+                            line_state.last_count_frame = frame_index
 
                 # Update stable point even when cooldown
                 # suppresses an otherwise valid crossing.
