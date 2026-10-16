@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 import threading
 import time
@@ -67,6 +68,10 @@ def opencv_capture_factory(source: str | int) -> Capture:
     import cv2
 
     if isinstance(source, str) and source.lower().startswith(("rtsp://", "rtsps://")):
+        os.environ.setdefault(
+            "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+            "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|max_delay;0|reorder_queue_size;0",
+        )
         return cv2.VideoCapture(
             source,
             cv2.CAP_FFMPEG,
@@ -75,6 +80,8 @@ def opencv_capture_factory(source: str | int) -> Capture:
                 3000,
                 cv2.CAP_PROP_READ_TIMEOUT_MSEC,
                 3000,
+                cv2.CAP_PROP_N_THREADS,
+                1,
             ],
         )
     return cv2.VideoCapture(source)

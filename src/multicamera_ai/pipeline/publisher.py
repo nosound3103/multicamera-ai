@@ -67,6 +67,8 @@ class RTSPPublisher:
             f"{c.width}x{c.height}",
             "-framerate",
             str(c.fps),
+            "-use_wallclock_as_timestamps",
+            "1",
             "-i",
             "pipe:0",
             "-an",
@@ -84,6 +86,8 @@ class RTSPPublisher:
             str(c.fps),
             "-bf",
             "0",
+            "-fps_mode",
+            "passthrough",
             "-rtsp_transport",
             "tcp",
             "-f",
@@ -152,6 +156,10 @@ class RTSPPublisher:
                 # Refresh after pacing, so a slower output never builds a FIFO.
                 packet = self.source.latest() or packet
                 sequence = packet.sequence
+                if (
+                    datetime.now(UTC) - packet.captured_at
+                ).total_seconds() > self.config.max_frame_age:
+                    continue
                 frame = cv2.resize(packet.annotated, (self.config.width, self.config.height))
                 if self.config.watermark:
                     stamp_frame(frame, packet.captured_at, sequence)
@@ -171,6 +179,8 @@ class RTSPPublisher:
                         if not written:
                             raise BrokenPipeError
                         data = data[written:]
+                    if data:
+                        break
                     with self._lock:
                         self._writing_since = None
                         self._frames += 1

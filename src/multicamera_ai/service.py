@@ -4,6 +4,7 @@ import logging
 import multiprocessing as mp
 import queue
 import shutil
+import signal
 import threading
 import time
 from dataclasses import asdict
@@ -52,9 +53,11 @@ def _offer(channel, value):
 def run_camera(config, camera, stop_event, channel, child_logging=False):
     """Same camera pipeline in a thread or spawned process; tracker is never shared."""
     if child_logging:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         configure_logging(config.runtime.log_dir, camera.id)
     capture = ai = recorder = publisher = None
     clean = True
+    failure = None
     try:
         source = camera.source.index if camera.source.type == "webcam" else camera.source.uri
         capture = CameraWorker(
@@ -100,6 +103,7 @@ def run_camera(config, camera, stop_event, channel, child_logging=False):
             )
             stop_event.wait(1.0)
     except Exception as exc:
+        failure = type(exc).__name__
         logger.error("Camera pipeline failed camera=%s error=%s", camera.id, type(exc).__name__)
         _offer(
             channel,
@@ -117,6 +121,7 @@ def run_camera(config, camera, stop_event, channel, child_logging=False):
                 "camera_id": camera.id,
                 "stopped": True,
                 "clean_shutdown": clean,
+                "error": failure,
                 "updated_at": time.time(),
             },
         )
@@ -203,7 +208,10 @@ class PipelineService:
                 return True
             worker, stop, channel = handle
             stop.set()
-            worker.join(self.config.runtime.shutdown_timeout + 2)
+            deadline = time.monotonic() + self.config.runtime.shutdown_timeout + 2
+            while worker.is_alive() and time.monotonic() < deadline:
+                self._read_status(camera_id)
+                worker.join(0.05)
             forced = False
             if worker.is_alive() and self.config.runtime.execution == "processes":
                 # Include FFmpeg descendants; a terminated parent cannot run its finally block.

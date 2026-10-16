@@ -89,3 +89,25 @@ def test_missing_ffmpeg_fails_before_starting_workers(tmp_path):
     with pytest.raises(ValueError, match="FFmpeg"):
         service.start()
     assert all(not v["worker_alive"] for v in service.status().values())
+
+
+def test_spawned_process_reports_capture_error_and_stops_cleanly(tmp_path):
+    config = configuration(tmp_path)
+    config.runtime.execution = "processes"
+    config.runtime.log_dir = str(tmp_path / "logs")
+    config.cameras = config.cameras[:1]
+    config.cameras[0].source.uri = str(tmp_path / "missing.mp4")
+    service = PipelineService(config)
+    try:
+        service.start()
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            status = service.status()["cam1"]
+            if status.get("ai", {}).get("state") == "error":
+                break
+            time.sleep(0.1)
+        assert status["capture"]["state"] == "error"
+        assert status["ai"]["state"] == "error"
+    finally:
+        assert service.stop() == {"cam1": True}
+    assert service.status()["cam1"]["worker_alive"] is False
