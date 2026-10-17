@@ -52,6 +52,25 @@ def _offer(channel, value):
             pass
 
 
+class ProcessStop:
+    """Lock-free stop flag: a killed child cannot leave an IPC lock held."""
+
+    def __init__(self, context):
+        self._flag = context.RawValue("b", False)
+
+    def set(self):
+        self._flag.value = True
+
+    def is_set(self):
+        return bool(self._flag.value)
+
+    def wait(self, timeout):
+        deadline = time.monotonic() + timeout
+        while not self.is_set() and time.monotonic() < deadline:
+            time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+        return self.is_set()
+
+
 def run_camera(config, camera, stop_event, channel, child_logging=False):
     """Same camera pipeline in a thread or spawned process; tracker is never shared."""
     if child_logging:
@@ -194,7 +213,7 @@ class PipelineService:
                     old[2].close()
                     old[2].join_thread()
             processes = self.config.runtime.execution == "processes"
-            stop = self._context.Event() if processes else threading.Event()
+            stop = ProcessStop(self._context) if processes else threading.Event()
             channel = self._context.Queue(maxsize=2) if processes else queue.Queue(maxsize=2)
             constructor = self._context.Process if processes else threading.Thread
             worker = constructor(

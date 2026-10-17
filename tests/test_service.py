@@ -142,3 +142,25 @@ def test_each_camera_uses_selected_model_profile(tmp_path, monkeypatch):
         assert sorted(loaded) == ["fake.pt", "vehicle.pt"]
     finally:
         assert all(service.stop().values())
+
+
+def test_killed_process_does_not_block_other_camera_cleanup(tmp_path):
+    config = configuration(tmp_path)
+    config.runtime.execution = "processes"
+    config.runtime.log_dir = str(tmp_path / "logs")
+    config.cameras = config.cameras[:2]
+    for camera in config.cameras:
+        camera.source.uri = str(tmp_path / "missing.mp4")
+    service = PipelineService(config)
+    service.start()
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        if all(s.get("ai", {}).get("state") == "error" for s in service.status().values()):
+            break
+        time.sleep(0.05)
+    worker = service._handles["cam1"][0]
+    worker.kill()
+    worker.join(5)
+    started = time.monotonic()
+    assert service.stop() == {"cam1": False, "cam2": True}
+    assert time.monotonic() - started < 5

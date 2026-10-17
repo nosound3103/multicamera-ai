@@ -24,7 +24,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv pip check --python /app/.venv/bin/python
 
 FROM base AS runtime
-ENV PYTHONPATH=/app/src
+ENV PYTHONPATH=/app/src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 COPY --from=dependencies /app/.venv /app/.venv
 COPY src ./src
 COPY config ./config
