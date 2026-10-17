@@ -63,6 +63,7 @@ def test_demo_video_writes_sqlite_events_and_snapshots(
             imgsz=640,
             class_ids=[0, 2],
             device="cpu",
+            half=False,
             cpu_threads=1,
         ),
     )
@@ -89,6 +90,9 @@ def test_demo_video_writes_sqlite_events_and_snapshots(
             self.xyxy = [Tensor(coords)]
 
     class FakeResult:
+        def cpu(self):
+            return self
+
         def __init__(self, frame, boxes):
             self.frame = frame
             self.boxes = Boxes(boxes)

@@ -40,6 +40,9 @@ class FakeBox:
 
 
 class FakeResult:
+    def cpu(self):
+        return self
+
     def __init__(self, frame, boxes):
         self.frame = frame
         # Ultralytics result.boxes.id is non-None when tracks exist.
@@ -143,7 +146,12 @@ def make_worker(tmp_path: Path, packets=None):
     worker = AIWorker(
         camera=make_camera(),
         model_config=SimpleNamespace(
-            weights="fake.pt", confidence=0.35, imgsz=640, class_ids=[0, 2], device="cpu"
+            weights="fake.pt",
+            confidence=0.35,
+            imgsz=640,
+            class_ids=[0, 2],
+            device="cpu",
+            half=False,
         ),
         source=ScriptedSource(packets or []),
         recorder=recorder,

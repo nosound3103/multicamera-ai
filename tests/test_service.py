@@ -42,7 +42,9 @@ def configuration(tmp_path):
 
 class Model:
     def track(self, frame, **kwargs):
-        return [SimpleNamespace(boxes=None, plot=lambda: frame.copy())]
+        result = SimpleNamespace(boxes=None, plot=lambda: frame.copy())
+        result.cpu = lambda: result
+        return [result]
 
 
 def test_four_cameras_api_toggle_events_and_shutdown(tmp_path, monkeypatch):

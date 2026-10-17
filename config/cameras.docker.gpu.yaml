@@ -107,6 +107,7 @@ runtime:
   execution: processes
 models:
   person:
+    half: true
     weights: ../models/yolo26n.pt
     device: '0'
     confidence: 0.5
@@ -115,6 +116,7 @@ models:
     - 0
     cpu_threads: 1
   vehicle:
+    half: true
     weights: ../models/yolo11-newdata.pt
     device: '0'
     confidence: 0.5

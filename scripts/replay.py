@@ -38,7 +38,7 @@ def replay_watermarked(args):
     captures, publishers = [], []
     try:
         for camera_id, source in args.inputs:
-            capture = CameraWorker(f"replay_{camera_id}", source, is_file=True)
+            capture = CameraWorker(f"replay_{camera_id}", source, is_file=True, file_max_fps=15)
             captures.append(capture)
             capture.start()
             publisher = RTSPPublisher(

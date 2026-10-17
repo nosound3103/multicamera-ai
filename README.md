@@ -74,7 +74,9 @@ latency, per-camera errors and shutdown flags in the result.
 
 Each camera selects a named profile with `model: vehicle` or `model: person`.
 Profiles live under `models` in YAML and contain weights, class IDs, confidence,
-imgsz, device and CPU thread limits. The vehicle weight uses IDs 0 bus, 1 car,
+imgsz, device and CPU thread limits. Optional `half: true` enables FP16 inference;
+the Docker GPU profiles enable it, while other profiles default to FP32.
+The vehicle weight uses IDs 0 bus, 1 car,
 2 motorbike, 3 truck; the person profile uses COCO class 0 (person). Other COCO vehicle IDs are
 2 car, 3 motorcycle, 5 bus and 7 truck when adding a broader profile. A legacy top-level `model` remains an optional
 fallback for cameras without a profile. Model and file-source paths resolve
@@ -97,6 +99,8 @@ python scripts/labelme_to_yaml.py assets/cam_1/cam_1.json --config config/camera
 The replay service reads enabled file sources from `cameras.local.yaml` and
 publishes each as `input_<camera-id>`. Keep matching camera IDs in Docker's RTSP
 config. Use `--count 4` to replay only the first four cameras for a 1-4 camera test.
+Watermarked replay converts at most 15 frames per second to BGR, skipping conversion
+of intervening decoded frames without accelerating file playback.
 Each camera owns its model instance and tracker even when sharing a profile;
 selecting a profile does not implement shared or batched inference.
 

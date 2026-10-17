@@ -22,6 +22,8 @@ class Capture(Protocol):
 
     def read(self) -> tuple[bool, Any]: ...
 
+    def grab(self) -> bool: ...
+
     def release(self) -> None: ...
 
     def get(self, property_id: int) -> float: ...
@@ -110,6 +112,7 @@ class CameraWorker:
         timestamp_watermark: bool = False,
         reconnect_delay: float = 1.0,
         file_realtime: bool = True,
+        file_max_fps: float | None = None,
         capture_factory: CaptureFactory | None = None,
     ) -> None:
         if not re.fullmatch(r"[a-z][a-z0-9_-]*", camera_id):
@@ -124,6 +127,10 @@ class CameraWorker:
             raise ValueError("webcam index must be non-negative")
         if is_file and isinstance(source, int):
             raise ValueError("File source must be a path")
+        if file_max_fps is not None and (
+            not is_file or not file_realtime or not math.isfinite(file_max_fps) or file_max_fps <= 0
+        ):
+            raise ValueError("file_max_fps requires a realtime file and a positive finite rate")
 
         self.camera_id = camera_id
         self.source = source
@@ -131,6 +138,7 @@ class CameraWorker:
         self.is_file = is_file
         self.reconnect_delay = reconnect_delay
         self.file_realtime = file_realtime
+        self.file_max_fps = file_max_fps
         self._validate_file = capture_factory is None
         self._capture_factory = capture_factory or opencv_capture_factory
         self._lifecycle_lock = threading.Lock()
@@ -272,6 +280,7 @@ class CameraWorker:
                     attempt = 0
                     frame_number = 0
                     frame_period = self._file_frame_period(capture) if self.is_file else None
+                    next_output = 0.0
                     deadline = time.monotonic()
 
                     while not self._stop_event.is_set():
@@ -282,6 +291,17 @@ class CameraWorker:
                             # Prevent unbounded catch-up after a scheduling pause.
                             deadline = max(deadline, time.monotonic() - frame_period)
 
+                        # Decode intervening frames without BGR conversion/copy when
+                        # replaying a high-FPS file into a slower RTSP publisher.
+                        if (
+                            self.file_max_fps is not None
+                            and frame_number * frame_period + 1e-9 < next_output
+                        ):
+                            if not capture.grab():
+                                self._set_state(CameraState.ENDED)
+                                return
+                            frame_number += 1
+                            continue
                         ok, frame = capture.read()
                         if not ok or frame is None:
                             if self.is_file:
@@ -309,6 +329,8 @@ class CameraWorker:
                             )
                             self._condition.notify_all()
                         frame_number += 1
+                        if self.file_max_fps is not None:
+                            next_output += 1.0 / self.file_max_fps
 
                 except Exception as exc:
                     # Avoid exposing RTSP URLs (which may contain credentials).

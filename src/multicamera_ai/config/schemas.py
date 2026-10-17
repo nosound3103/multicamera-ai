@@ -101,6 +101,7 @@ class VideoSource(StrictModel):
 
 
 class YOLOConfig(StrictModel):
+    half: bool = False
     cpu_threads: int = Field(default=1, ge=1, le=64)
     weights: str = Field(min_length=1)
     device: str = Field(default="cpu", min_length=1)

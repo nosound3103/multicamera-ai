@@ -280,8 +280,9 @@ class AIWorker:
             imgsz=self.model_config.imgsz,
             classes=self.model_config.class_ids,
             device=self.model_config.device,
+            quantize=16 if self.model_config.half else None,
             verbose=False,
-        )[0]
+        )[0].cpu()
         inference_ms = (time.perf_counter() - started) * 1000
         annotated = result.plot()
         height, width = annotated.shape[:2]
