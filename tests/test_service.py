@@ -100,6 +100,7 @@ def test_spawned_process_reports_capture_error_and_stops_cleanly(tmp_path):
     service = PipelineService(config)
     try:
         service.start()
+        worker = service._handles["cam1"][0]
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             status = service.status()["cam1"]
@@ -110,6 +111,7 @@ def test_spawned_process_reports_capture_error_and_stops_cleanly(tmp_path):
         assert status["ai"]["state"] == "error"
     finally:
         assert service.stop() == {"cam1": True}
+    assert worker.exitcode == 0
     assert service.status()["cam1"]["worker_alive"] is False
 
 

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 import multiprocessing as mp
+import os
 import queue
 import shutil
 import signal
+import sys
 import threading
 import time
 from dataclasses import asdict
@@ -129,6 +131,32 @@ def run_camera(config, camera, stop_event, channel, child_logging=False):
         )
         if not clean:
             logger.error("Camera shutdown timed out camera=%s", camera.id)
+    return clean
+
+
+def run_camera_process(config, camera, stop_event, channel, child_logging=True):
+    """Exit the owned worker after explicit cleanup, without native atexit teardown.
+
+    CUDA interpreter teardown can outlive the cleanup deadline on WSL. All video,
+    event and FFmpeg resources are closed by run_camera; only plain status data
+    crosses this process boundary. Flush that data before the terminal exit.
+    """
+    exit_code = 1
+    try:
+        exit_code = 0 if run_camera(config, camera, stop_event, channel, child_logging) else 1
+    except Exception:
+        logger.exception("Camera process failed camera=%s", camera.id)
+    finally:
+        try:
+            channel.close()
+            channel.join_thread()
+            logging.shutdown()
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            exit_code = 1
+        finally:
+            os._exit(exit_code)
 
 
 class PipelineService:
@@ -169,7 +197,7 @@ class PipelineService:
             channel = self._context.Queue(maxsize=2) if processes else queue.Queue(maxsize=2)
             constructor = self._context.Process if processes else threading.Thread
             worker = constructor(
-                target=run_camera,
+                target=run_camera_process if processes else run_camera,
                 args=(self.config, camera, stop, channel, processes),
                 name=f"pipeline-{camera_id}",
                 daemon=False,
@@ -231,7 +259,13 @@ class PipelineService:
                 psutil.wait_procs(descendants, timeout=3)
                 forced = True
             result = self._read_status(camera_id)
-            clean = not worker.is_alive() and result.get("clean_shutdown", False) and not forced
+            exit_ok = self.config.runtime.execution != "processes" or worker.exitcode == 0
+            clean = (
+                not worker.is_alive()
+                and exit_ok
+                and result.get("clean_shutdown", False)
+                and not forced
+            )
             if not clean:
                 logger.error("Unclean shutdown camera=%s forced=%s", camera_id, forced)
             if not worker.is_alive() and hasattr(channel, "close"):
