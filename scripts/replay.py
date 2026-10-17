@@ -1,4 +1,4 @@
-"""Replay one file as N real-time RTSP inputs, restarting failed publishers."""
+"""Replay configured files or one file as real-time RTSP inputs, restarting failed publishers."""
 
 import argparse
 import logging
@@ -37,13 +37,13 @@ def replay_watermarked(args):
 
     captures, publishers = [], []
     try:
-        for i in range(args.start_index, args.start_index + args.count):
-            capture = CameraWorker(f"replay{i}", args.input, is_file=True)
+        for camera_id, source in args.inputs:
+            capture = CameraWorker(f"replay_{camera_id}", source, is_file=True)
             captures.append(capture)
             capture.start()
             publisher = RTSPPublisher(
-                f"replay{i}",
-                f"{args.server}/input_cam{i}",
+                f"replay_{camera_id}",
+                f"{args.server}/input_{camera_id}",
                 Adapter(capture),
                 StreamingConfig(watermark=True, fps=25),
             )
@@ -65,29 +65,51 @@ def replay_watermarked(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", required=True)
-    parser.add_argument("--count", type=int, default=4)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--input")
+    inputs.add_argument("--config", help="File-source camera YAML; replays each enabled camera")
+    parser.add_argument("--count", type=int, default=None)
     parser.add_argument("--start-index", type=int, default=1)
     parser.add_argument("--server", default="rtsp://127.0.0.1:8554")
     parser.add_argument(
         "--watermark", action="store_true", help="Embed capture timestamps for end-to-end probes"
     )
     args = parser.parse_args()
-    if not Path(args.input).is_file() or min(args.count, args.start_index) < 1:
-        parser.error("Input must exist and count must be positive")
+    if args.start_index < 1 or (args.count is not None and args.count < 1):
+        parser.error("Count and start-index must be positive")
+    if args.config:
+        from multicamera_ai.config import ConfigError, load_config
+
+        try:
+            config = load_config(args.config)
+        except ConfigError as exc:
+            parser.error(str(exc))
+        cameras = [c for c in config.cameras if c.enabled]
+        if args.count is not None:
+            cameras = cameras[: args.count]
+        if not cameras or any(c.source.type != "file" for c in cameras):
+            parser.error("Replay config requires enabled file-source cameras")
+        args.inputs = [(c.id, c.source.uri) for c in cameras]
+    else:
+        args.inputs = [
+            (f"cam{i}", args.input)
+            for i in range(args.start_index, args.start_index + (args.count or 4))
+        ]
+    if any(not Path(source).is_file() for _, source in args.inputs):
+        parser.error("Every input video must exist")
     logging.basicConfig(level=logging.INFO)
     if args.watermark:
         return replay_watermarked(args)
     children = {}
     try:
         while True:
-            for i in range(args.start_index, args.start_index + args.count):
-                process = children.get(i)
+            for camera_id, source in args.inputs:
+                process = children.get(camera_id)
                 if process and process.poll() is None:
                     continue
                 if process:
                     process.wait()
-                children[i] = subprocess.Popen(
+                children[camera_id] = subprocess.Popen(
                     [
                         "ffmpeg",
                         "-hide_banner",
@@ -98,7 +120,7 @@ def main():
                         "-stream_loop",
                         "-1",
                         "-i",
-                        args.input,
+                        source,
                         "-an",
                         "-c:v",
                         "libx264",
@@ -116,12 +138,12 @@ def main():
                         "tcp",
                         "-f",
                         "rtsp",
-                        f"{args.server}/input_cam{i}",
+                        f"{args.server}/input_{camera_id}",
                     ],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                logging.info("Replay started camera=cam%d pid=%d", i, children[i].pid)
+                logging.info("Replay started camera=%s pid=%d", camera_id, children[camera_id].pid)
             time.sleep(1)
     except KeyboardInterrupt:
         pass

@@ -25,8 +25,8 @@ services:
       - ./storage:/app/storage
       - ./logs:/app/logs
       - type: bind
-        source: ./yolo26n.pt
-        target: /app/yolo26n.pt
+        source: ./models
+        target: /app/models
         read_only: true
         bind:
           create_host_path: false
@@ -44,7 +44,8 @@ services:
     entrypoint: ["python", "scripts/replay.py"]
     volumes:
       - ./assets:/app/assets:ro
-    command: ["--input", "assets/people-walking.mp4", "--count", "4", "--server", "rtsp://mediamtx:8554", "--watermark"]
+      - ./config:/app/config:ro
+    command: ["--config", "config/cameras.local.yaml", "--server", "rtsp://mediamtx:8554", "--watermark"]
     stop_grace_period: 15s
     stop_signal: SIGINT
 
@@ -63,8 +64,8 @@ services:
       - ./storage:/app/storage
       - ./logs:/app/logs
       - type: bind
-        source: ./yolo26n.pt
-        target: /app/yolo26n.pt
+        source: ./models
+        target: /app/models
         read_only: true
         bind:
           create_host_path: false
