@@ -206,7 +206,7 @@ def main():
         "logical_cpus": psutil.cpu_count(),
         "ram_bytes": psutil.virtual_memory().total,
         "gpu": gpu,
-        "model": config.model.model_dump(),
+        "models": {c.id: config.model_for(c).model_dump() for c in config.cameras},
         "streaming": config.streaming.model_dump() | {"enabled": True, "watermark": True},
         "input_source_override": args.source,
         "source_watermark": args.source_watermark,

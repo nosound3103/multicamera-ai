@@ -38,7 +38,7 @@ def main():
     args = parser.parse_args()
     config = load_config(args.config)
     config.runtime.execution = args.mode
-    config.model.imgsz = 320
+    config.model_for(config.cameras[0]).imgsz = 320
     config.streaming.watermark = True
     config.runtime.database = "storage/integration-check.db"
     config.runtime.snapshots = "storage/integration-check-snapshots"

@@ -111,3 +111,32 @@ def test_spawned_process_reports_capture_error_and_stops_cleanly(tmp_path):
     finally:
         assert service.stop() == {"cam1": True}
     assert service.status()["cam1"]["worker_alive"] is False
+
+
+def test_each_camera_uses_selected_model_profile(tmp_path, monkeypatch):
+    config = configuration(tmp_path)
+    config.cameras = config.cameras[:2]
+    config.models = {
+        "vehicle": config.model.model_copy(
+            update={"weights": "vehicle.pt", "class_ids": [0, 1, 2, 3]}
+        )
+    }
+    config.cameras[0].model = "vehicle"
+    loaded = []
+
+    def factory(weights):
+        loaded.append(weights)
+        return Model()
+
+    monkeypatch.setattr(
+        "multicamera_ai.service.AIWorker", functools.partial(AIWorker, model_factory=factory)
+    )
+    service = PipelineService(config)
+    try:
+        service.start()
+        deadline = time.monotonic() + 5
+        while len(loaded) < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert sorted(loaded) == ["fake.pt", "vehicle.pt"]
+    finally:
+        assert all(service.stop().values())

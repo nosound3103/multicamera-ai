@@ -221,7 +221,7 @@ def main() -> None:
         written = run_file(
             source=source,
             camera=camera,
-            model_config=config.model,
+            model_config=config.model_for(camera),
             recorder=recorder,
             output_path=output_path,
             max_frames=args.max_frames,
@@ -231,7 +231,7 @@ def main() -> None:
         written = run_live(
             source=source,
             camera=camera,
-            model_config=config.model,
+            model_config=config.model_for(camera),
             recorder=recorder,
             output_path=output_path,
             max_frames=args.max_frames,

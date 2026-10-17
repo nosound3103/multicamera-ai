@@ -253,6 +253,9 @@ class AIWorker:
         if packet.session_id != self._session_id:
             if self.model_factory is _make_yolo:
                 self._model = _make_yolo(self.model_config.weights, self.model_config.cpu_threads)
+                from multicamera_ai.config.models import validate_class_ids
+
+                validate_class_ids(self.model_config, self._model.names)
             else:
                 self._model = self.model_factory(self.model_config.weights)
             self._engine = EventEngine(self.camera.id)

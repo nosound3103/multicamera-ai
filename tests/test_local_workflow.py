@@ -24,8 +24,7 @@ def test_labelme_boundary_coordinates_project_to_last_pixel():
         "imageWidth": 1920,
         "imageHeight": 1080,
         "shapes": [
-            {"label": "in_entrance", "shape_type": "line", "points": [[0, 0], [1920, 1080]]},
-            {"label": "out_entrance", "shape_type": "line", "points": [[0, 1080], [1920, 0]]},
+            {"label": "counting_line", "shape_type": "line", "points": [[0, 0], [1920, 1080]]},
             {
                 "label": "restricted_area",
                 "shape_type": "polygon",

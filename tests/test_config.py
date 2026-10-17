@@ -139,11 +139,11 @@ def test_missing_yaml_file(tmp_path):
         load_config(tmp_path / "missing.yaml")
 
 
-def test_example_has_four_cameras():
+def test_example_has_five_cameras():
     root = Path(__file__).resolve().parents[1]
     config = load_config(root / "config" / "cameras.yaml")
 
-    assert len(config.cameras) == 4
+    assert len(config.cameras) == 5
 
 
 def test_local_configuration_preserves_deployment_settings(monkeypatch, tmp_path):
@@ -173,3 +173,84 @@ def test_file_path_resolves_relative_to_yaml(valid_data, tmp_path, monkeypatch):
     path.write_text(yaml.safe_dump(valid_data), encoding="utf-8")
     monkeypatch.chdir(folder)
     assert load_config(path).cameras[0].source.uri == str(tmp_path / "video.mp4")
+
+
+def test_camera_model_profiles_and_legacy_fallback(valid_data):
+    valid_data["models"] = {
+        "vehicle": dict(valid_data["model"], weights="vehicle.pt", class_ids=[0, 1, 2, 3])
+    }
+    config = AppConfig.model_validate(valid_data)
+    assert config.model_for(config.cameras[0]) is config.model
+    config.cameras[0].model = "vehicle"
+    assert config.model_for(config.cameras[0]).weights == "vehicle.pt"
+    assert config.model_for(config.cameras[0]).class_ids == [0, 1, 2, 3]
+
+
+def test_profiles_without_global_model_support_more_cameras(valid_data):
+    valid_data["models"] = {"person": valid_data.pop("model")}
+    template = valid_data["cameras"][0]
+    valid_data["cameras"] = [
+        dict(
+            deepcopy(template), id=f"cam{i}", model="person", output_url=f"rtsp://localhost/out{i}"
+        )
+        for i in range(1, 10)
+    ]
+    config = AppConfig.model_validate(valid_data)
+    assert len(config.cameras) == 9
+    assert all(config.model_for(c) is config.models["person"] for c in config.cameras)
+
+
+@pytest.mark.parametrize("profile", [None, "missing"])
+def test_camera_requires_known_profile_without_default(valid_data, profile):
+    valid_data.pop("model")
+    valid_data["cameras"][0]["model"] = profile
+    with pytest.raises(ValidationError, match="model profile"):
+        AppConfig.model_validate(valid_data)
+
+
+def test_model_paths_resolve_relative_to_yaml(valid_data, tmp_path, monkeypatch):
+    folder = tmp_path / "config"
+    folder.mkdir()
+    valid_data["model"]["weights"] = "../models/default.pt"
+    valid_data["models"] = {"vehicle": dict(valid_data["model"], weights="../models/vehicle.pt")}
+    path = folder / "test.yaml"
+    path.write_text(yaml.safe_dump(valid_data))
+    monkeypatch.chdir(tmp_path.parent)
+    config = load_config(path)
+    assert config.model.weights == str(tmp_path / "models/default.pt")
+    assert config.models["vehicle"].weights == str(tmp_path / "models/vehicle.pt")
+
+
+def test_runtime_model_validation_checks_each_profile(valid_data, tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from multicamera_ai.config.models import validate_model_files
+
+    weights = tmp_path / "model.pt"
+    weights.touch()
+    valid_data["model"]["weights"] = str(weights)
+    valid_data["model"]["class_ids"] = [0]
+    valid_data["models"] = {"vehicle": dict(valid_data["model"], class_ids=[7])}
+    other = dict(
+        deepcopy(valid_data["cameras"][0]),
+        id="cam2",
+        model="vehicle",
+        output_url="rtsp://localhost/out2",
+    )
+    valid_data["cameras"].append(other)
+    monkeypatch.setitem(
+        sys.modules,
+        "ultralytics",
+        SimpleNamespace(YOLO=lambda _: SimpleNamespace(names={0: "bus", 1: "car"})),
+    )
+    with pytest.raises(ValueError, match="unknown class IDs.*7"):
+        validate_model_files(AppConfig.model_validate(valid_data))
+
+
+def test_runtime_missing_weights_fail_without_downloading(valid_data, tmp_path):
+    from multicamera_ai.config.models import validate_model_files
+
+    valid_data["model"]["weights"] = str(tmp_path / "missing.pt")
+    with pytest.raises(ValueError, match="weights not found"):
+        validate_model_files(AppConfig.model_validate(valid_data))

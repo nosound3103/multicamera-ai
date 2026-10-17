@@ -20,6 +20,13 @@ def main() -> int:
     if args.check:
         logging.getLogger(__name__).info("Configuration valid: %d cameras", len(config.cameras))
         return 0
+    from multicamera_ai.config.models import validate_model_files
+
+    try:
+        validate_model_files(config)
+    except (OSError, ValueError, RuntimeError) as exc:
+        logging.getLogger(__name__).error("Model configuration failed: %s", exc)
+        return 2
     import uvicorn
 
     from multicamera_ai.api import create_app

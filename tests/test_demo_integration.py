@@ -33,8 +33,12 @@ def test_demo_video_writes_sqlite_events_and_snapshots(tmp_path, monkeypatch):
         id="cam1",
         source=SimpleNamespace(type="file", uri=str(source)),
         lines=[
-            SimpleNamespace(id="in_entrance", start=point(0, 0.5), end=point(0.4, 0.5)),
-            SimpleNamespace(id="out_entrance", start=point(0.6, 0.5), end=point(1, 0.5)),
+            SimpleNamespace(
+                id="counting_line",
+                start=point(0, 0.5),
+                end=point(1, 0.5),
+                in_direction="negative_to_positive",
+            ),
         ],
         zones=[
             SimpleNamespace(
@@ -54,6 +58,7 @@ def test_demo_video_writes_sqlite_events_and_snapshots(tmp_path, monkeypatch):
             weights="unused.pt", confidence=0.4, imgsz=640, class_ids=[0, 2], device="cpu"
         ),
     )
+    fake_config.model_for = lambda camera: fake_config.model
     monkeypatch.setattr(demo, "load_config", lambda _: fake_config)
 
     class Scalar:

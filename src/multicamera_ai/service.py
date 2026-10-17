@@ -72,7 +72,9 @@ def run_camera(config, camera, stop_event, channel, child_logging=False):
             EventRecorder(store, SnapshotWriter(config.runtime.snapshots)),
             config.runtime.event_queue_size,
         )
-        ai = AIWorker(camera=camera, model_config=config.model, source=capture, recorder=recorder)
+        ai = AIWorker(
+            camera=camera, model_config=config.model_for(camera), source=capture, recorder=recorder
+        )
         if config.streaming.enabled:
             publisher = RTSPPublisher(camera.id, camera.output_url, ai, config.streaming)
         capture.start()

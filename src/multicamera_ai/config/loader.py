@@ -28,6 +28,14 @@ def load_config(path: str | Path) -> AppConfig:
 
     try:
         config = AppConfig.model_validate(data)
+        models = list(config.models.values())
+        if config.model is not None:
+            models.append(config.model)
+        for model in models:
+            weights = Path(model.weights).expanduser()
+            if not weights.is_absolute():
+                weights = config_path.resolve().parent / weights
+            model.weights = str(weights.resolve())
         # YAML file paths are relative to the YAML directory, never the process cwd.
         for camera in config.cameras:
             if camera.source.type == "file" and camera.source.uri:

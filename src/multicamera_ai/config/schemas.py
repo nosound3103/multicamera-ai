@@ -121,6 +121,7 @@ class YOLOConfig(StrictModel):
 
 
 class CameraConfig(StrictModel):
+    model: str | None = Field(default=None, min_length=1)
     id: str = Field(
         min_length=1,
         pattern=r"^[a-z][a-z0-9_-]*$",
@@ -176,11 +177,25 @@ class StreamingConfig(StrictModel):
 class AppConfig(StrictModel):
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     streaming: StreamingConfig = Field(default_factory=StreamingConfig)
-    model: YOLOConfig
+    model: YOLOConfig | None = None
+    models: dict[str, YOLOConfig] = Field(default_factory=dict)
     cameras: list[CameraConfig] = Field(min_length=1)
+
+    def model_for(self, camera: CameraConfig) -> YOLOConfig:
+        """Resolve a camera profile without sharing its model or tracker instance."""
+        if camera.model is not None:
+            return self.models[camera.model]
+        if self.model is None:
+            raise ValueError(f"Camera {camera.id} requires a model profile")
+        return self.model
 
     @model_validator(mode="after")
     def validate_cameras(self) -> Self:
+        for camera in self.cameras:
+            if camera.model is not None and camera.model not in self.models:
+                raise ValueError(f"Camera {camera.id}: unknown model profile '{camera.model}'")
+            if camera.model is None and self.model is None:
+                raise ValueError(f"Camera {camera.id} requires a model profile or default model")
         ids = [camera.id for camera in self.cameras]
 
         if len(ids) != len(set(ids)):
