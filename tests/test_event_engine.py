@@ -288,23 +288,8 @@ def test_invalid_threshold_is_rejected():
 
 
 def test_degenerate_line_is_rejected():
-    engine = EventEngine("cam1")
-
     with pytest.raises(ValueError, match="Degenerate"):
-        engine.process_frame(
-            frame_index=1,
-            detections=[
-                TrackedPoint(1, (20, 30)),
-            ],
-            lines=[
-                CountLine(
-                    "counting_line",
-                    (0, 0),
-                    (0, 0),
-                ),
-            ],
-            zones=[],
-        )
+        CountLine("counting_line", (0, 0), (0, 0))
 
 
 def test_nonfinite_anchor_is_rejected():
@@ -348,3 +333,28 @@ def test_zone_occlusion_does_not_duplicate_confirmed_entry():
         tick(engine, i, lines=())
     for i in range(10, 14):
         assert tick(engine, i, (1, (20, 20)), lines=()) == []
+
+
+def test_visible_occupancy_is_independent_of_event_confirmation_and_release():
+    engine = EventEngine("cam1")
+    for frame in range(1, 4):
+        events = tick(engine, frame, (1, (20, 20)), lines=())
+        assert engine.inside_track_ids == {1}
+        assert len(events) == (1 if frame == 3 else 0)
+
+    tick(engine, 4, (1, (50, 50)), lines=())
+    assert engine.inside_track_ids == set()
+    # A brief exit changes the overlay immediately without rearming the event.
+    assert tick(engine, 5, (1, (20, 20)), lines=()) == []
+    assert engine.inside_track_ids == {1}
+    engine.reset()
+    assert engine.inside_track_ids == set()
+
+
+def test_visible_occupancy_counts_overlapping_zones_once_and_excludes_missing_tracks():
+    engine = EventEngine("cam1")
+    zones = [ZONE, RestrictedZone("overlap", ((0, 0), (30, 0), (30, 30), (0, 30)))]
+    tick(engine, 1, (1, (20, 20)), (2, (10, 40)), (3, (60, 60)), lines=(), zones=zones)
+    assert engine.inside_track_ids == {1, 2}
+    tick(engine, 2, lines=(), zones=zones)
+    assert engine.inside_track_ids == set()

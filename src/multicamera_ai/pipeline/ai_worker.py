@@ -17,7 +17,7 @@ from multicamera_ai.events import (
     EventType,
     TrackedPoint,
 )
-from multicamera_ai.vision.geometry import bottom_center, point_in_polygon
+from multicamera_ai.vision.geometry import bottom_center
 
 if TYPE_CHECKING:
     from multicamera_ai.events.recorder import EventRecorder
@@ -309,7 +309,7 @@ class AIWorker:
         )
 
         draw_regions(annotated, self._lines, self._zones)
-        inside_ids = set()
+        inside_ids = self._engine.inside_track_ids
         import cv2
 
         for track_id, anchor, (x1, y1, x2, y2) in visible:
@@ -321,8 +321,7 @@ class AIWorker:
                 -1,
                 cv2.LINE_AA,
             )
-            if any(point_in_polygon(anchor, zone.points) for zone in self._zones):
-                inside_ids.add(track_id)
+            if track_id in inside_ids:
                 cv2.rectangle(
                     annotated,
                     (round(x1), round(y1)),

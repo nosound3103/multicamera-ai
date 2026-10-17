@@ -9,7 +9,6 @@ from multicamera_ai.vision.geometry import (
     cross_product,
     crossing_direction,
     point_in_polygon,
-    side_of_line,
 )
 
 
@@ -25,6 +24,13 @@ class CountLine:
     start: Point2D
     end: Point2D
     in_direction: CrossingDirection = "negative_to_positive"
+    length: float = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        length = hypot(self.end[0] - self.start[0], self.end[1] - self.start[1])
+        if length == 0:
+            raise ValueError(f"Degenerate counting line: {self.id}")
+        object.__setattr__(self, "length", length)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +109,12 @@ class EventEngine:
 
         self._tracks: dict[int, _TrackState] = {}
         self._last_frame: int | None = None
+        self._inside_track_ids: frozenset[int] = frozenset()
+
+    @property
+    def inside_track_ids(self) -> frozenset[int]:
+        """Visible tracks inside any polygon this frame, before event confirmation."""
+        return self._inside_track_ids
 
     @property
     def active_track_count(self) -> int:
@@ -113,6 +125,7 @@ class EventEngine:
         """Reset when a camera or tracker session restarts."""
         self._tracks.clear()
         self._last_frame = None
+        self._inside_track_ids = frozenset()
 
     def process_frame(
         self,
@@ -151,6 +164,7 @@ class EventEngine:
 
         self._last_frame = frame_index
         events: list[Event] = []
+        inside_ids: set[int] = set()
 
         # ------------------------------------------
         # 2. Process each tracked object
@@ -179,21 +193,7 @@ class EventEngine:
                     _LineState(),
                 )
 
-                dx = line.end[0] - line.start[0]
-                dy = line.end[1] - line.start[1]
-                line_length = hypot(dx, dy)
-
-                if line_length == 0:
-                    raise ValueError(f"Degenerate counting line: {line.id}")
-
-                signed_distance = (
-                    cross_product(
-                        line.start,
-                        line.end,
-                        item.anchor,
-                    )
-                    / line_length
-                )
+                signed_distance = cross_product(line.start, line.end, item.anchor) / line.length
 
                 # Ignore positions close to the line.
                 if abs(signed_distance) <= self.line_margin_px:
@@ -201,45 +201,25 @@ class EventEngine:
 
                 previous = line_state.stable_point
 
-                if previous is not None:
-                    before_side = side_of_line(
-                        line.start,
-                        line.end,
-                        previous,
-                    )
-                    after_side = side_of_line(
-                        line.start,
-                        line.end,
-                        item.anchor,
-                    )
-
-                    if before_side != after_side:
-                        crossed = crossing_direction(
-                            previous,
-                            item.anchor,
-                            line.start,
-                            line.end,
-                        )
-
-                        cooldown_over = (
-                            line_state.last_count_frame is None
-                            or frame_index - line_state.last_count_frame
-                            >= self.line_cooldown_frames
-                        )
-
-                        if crossed is not None and cooldown_over:
-                            events.append(
-                                Event(
-                                    camera_id=self.camera_id,
-                                    track_id=item.track_id,
-                                    event_type=EventType.LINE_CROSSING,
-                                    region_id=line.id,
-                                    direction="IN" if crossed == line.in_direction else "OUT",
-                                )
+                cooldown_over = (
+                    line_state.last_count_frame is None
+                    or frame_index - line_state.last_count_frame >= self.line_cooldown_frames
+                )
+                if previous is not None and cooldown_over:
+                    crossed = crossing_direction(previous, item.anchor, line.start, line.end)
+                    if crossed is not None:
+                        events.append(
+                            Event(
+                                camera_id=self.camera_id,
+                                track_id=item.track_id,
+                                event_type=EventType.LINE_CROSSING,
+                                region_id=line.id,
+                                direction="IN" if crossed == line.in_direction else "OUT",
                             )
+                        )
 
-                            # Debounce each line independently.
-                            line_state.last_count_frame = frame_index
+                        # Debounce each line independently.
+                        line_state.last_count_frame = frame_index
 
                 # Update stable point even when cooldown
                 # suppresses an otherwise valid crossing.
@@ -260,6 +240,7 @@ class EventEngine:
                 )
 
                 if inside:
+                    inside_ids.add(item.track_id)
                     zone_state.inside_streak += 1
                     zone_state.outside_streak = 0
 
@@ -299,4 +280,5 @@ class EventEngine:
         for track_id in expired:
             del self._tracks[track_id]
 
+        self._inside_track_ids = frozenset(inside_ids)
         return events
