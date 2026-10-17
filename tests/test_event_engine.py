@@ -8,18 +8,22 @@ from multicamera_ai.events import (
     TrackedPoint,
 )
 
-IN_LINE = CountLine(
-    id="in_entrance",
+COUNTING_LINE = CountLine(
+    id="counting_line",
     start=(0.0, 50.0),
-    end=(45.0, 50.0),
-    count_as="IN",
+    end=(100.0, 50.0),
 )
 
-OUT_LINE = CountLine(
-    id="out_entrance",
+LEFT_LINE = CountLine(
+    id="line_a",
+    start=(0.0, 50.0),
+    end=(45.0, 50.0),
+)
+
+RIGHT_LINE = CountLine(
+    id="line_b",
     start=(55.0, 50.0),
     end=(100.0, 50.0),
-    count_as="OUT",
 )
 
 ZONE = RestrictedZone(
@@ -37,7 +41,7 @@ def tick(
     engine,
     index,
     *points,
-    lines=(IN_LINE, OUT_LINE),
+    lines=(LEFT_LINE, RIGHT_LINE),
     zones=(ZONE,),
 ):
     """Simulate one video frame."""
@@ -55,29 +59,29 @@ def test_first_frame_has_no_crossing():
     assert tick(engine, 1, (12, (20, 30))) == []
 
 
-def test_in_line_generates_one_in_event():
+def test_counting_line_generates_in_event():
     engine = EventEngine("cam1")
 
-    tick(engine, 1, (12, (20, 30)), zones=())
-    events = tick(engine, 2, (12, (20, 70)), zones=())
+    tick(engine, 1, (12, (20, 30)), lines=(COUNTING_LINE,), zones=())
+    events = tick(engine, 2, (12, (20, 70)), lines=(COUNTING_LINE,), zones=())
 
     assert len(events) == 1
     assert events[0].event_type == EventType.LINE_CROSSING
     assert events[0].direction == "IN"
-    assert events[0].region_id == "in_entrance"
+    assert events[0].region_id == "counting_line"
     assert events[0].track_id == 12
     assert events[0].camera_id == "cam1"
 
 
-def test_out_line_generates_one_out_event():
+def test_counting_line_generates_out_event():
     engine = EventEngine("cam2")
 
-    tick(engine, 1, (20, (80, 70)), zones=())
-    events = tick(engine, 2, (20, (80, 30)), zones=())
+    tick(engine, 1, (20, (20, 70)), lines=(COUNTING_LINE,), zones=())
+    events = tick(engine, 2, (20, (20, 30)), lines=(COUNTING_LINE,), zones=())
 
     assert len(events) == 1
     assert events[0].direction == "OUT"
-    assert events[0].region_id == "out_entrance"
+    assert events[0].region_id == "counting_line"
 
 
 def test_crossing_outside_finite_segment():
@@ -294,10 +298,9 @@ def test_degenerate_line_is_rejected():
             ],
             lines=[
                 CountLine(
-                    "in_entrance",
+                    "counting_line",
                     (0, 0),
                     (0, 0),
-                    "IN",
                 ),
             ],
             zones=[],
@@ -325,8 +328,8 @@ def test_negative_track_id_is_rejected():
 @pytest.mark.parametrize("ys,expected", [([30, 70], "IN"), ([70, 30], "OUT")])
 def test_same_line_counts_both_directions(ys, expected):
     engine = EventEngine("cam1")
-    tick(engine, 1, (1, (20, ys[0])), lines=(IN_LINE,), zones=())
-    events = tick(engine, 2, (1, (20, ys[1])), lines=(IN_LINE,), zones=())
+    tick(engine, 1, (1, (20, ys[0])), lines=(COUNTING_LINE,), zones=())
+    events = tick(engine, 2, (1, (20, ys[1])), lines=(COUNTING_LINE,), zones=())
     assert [e.direction for e in events] == [expected]
 
 

@@ -93,7 +93,7 @@ def test_engine_events_persist_once_and_reentry_creates_new_event(tmp_path):
     storage = SQLiteEventStore(tmp_path / "events.db")
     recorder = EventRecorder(storage, SnapshotWriter(tmp_path / "snapshots"))
     engine = EventEngine("cam1", zone_confirm_frames=2, zone_release_frames=2)
-    lines = [CountLine("in_entrance", (0, 50), (60, 50), "IN")]
+    lines = [CountLine("counting_line", (0, 50), (60, 50))]
     zones = [RestrictedZone("restricted_area", ((85, 15), (130, 15), (130, 45), (85, 45)))]
     frames = [
         [(1, (20, 25)), (2, (100, 60))],

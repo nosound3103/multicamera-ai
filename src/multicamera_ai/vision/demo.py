@@ -26,8 +26,7 @@ from multicamera_ai.vision.geometry import (
 
 logger = logging.getLogger(__name__)
 
-LANE_DIRECTIONS = {"in_entrance": "IN", "out_entrance": "OUT"}
-LINE_COLORS = {"IN": (80, 205, 40), "OUT": (0, 165, 255)}
+COUNTING_LINE_COLOR = (80, 205, 40)
 
 
 def project_regions(camera, width: int, height: int):
@@ -37,8 +36,7 @@ def project_regions(camera, width: int, height: int):
             id=line.id,
             start=normalized_to_pixel((line.start.x, line.start.y), width, height),
             end=normalized_to_pixel((line.end.x, line.end.y), width, height),
-            count_as=LANE_DIRECTIONS.get(line.id, "IN"),
-            in_direction=getattr(line, "in_direction", "negative_to_positive"),
+            in_direction=line.in_direction,
         )
         for line in camera.lines
     ]
@@ -76,12 +74,11 @@ def draw_regions(image: np.ndarray, lines, zones) -> None:
         )
 
     for line in lines:
-        color = LINE_COLORS[line.count_as]
         cv2.line(
             image,
             tuple(map(round, line.start)),
             tuple(map(round, line.end)),
-            color,
+            COUNTING_LINE_COLOR,
             3,
             cv2.LINE_AA,
         )

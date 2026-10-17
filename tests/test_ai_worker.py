@@ -66,14 +66,14 @@ class FakeYOLO:
     def track(self, frame, **kwargs):
         self.calls.append((self, kwargs))
         code = int(frame[0, 0, 0])
-        # 1: IN lane above line; 2: below line; 3: inside zone;
-        # 4: OUT lane below line; 5: above OUT line; 0: no detections.
+        # 1: above the counting line; 2: below it; 3: inside the zone;
+        # 4: below the line; 5: above it; 0: no detections.
         anchors = {
             1: (20, 20),
             2: (20, 80),
             3: (28, 26),
-            4: (75, 80),
-            5: (75, 20),
+            4: (20, 80),
+            5: (20, 20),
         }
         boxes = [FakeBox(11, anchors[code])] if code in anchors else []
         return [FakeResult(frame, boxes)]
@@ -102,8 +102,12 @@ def make_camera():
     return SimpleNamespace(
         id="cam1",
         lines=[
-            SimpleNamespace(id="in_entrance", start=point(0.1, 0.5), end=point(0.45, 0.5)),
-            SimpleNamespace(id="out_entrance", start=point(0.55, 0.5), end=point(0.95, 0.5)),
+            SimpleNamespace(
+                id="counting_line",
+                start=point(0.1, 0.5),
+                end=point(0.9, 0.5),
+                in_direction="negative_to_positive",
+            ),
         ],
         zones=[
             SimpleNamespace(
@@ -157,7 +161,7 @@ def test_process_single_in_event_persists_sqlite_snapshot(tmp_path):
 
     rows = db.list_events(camera_id="cam1")
     assert len(rows) == 1
-    assert (rows[0].region_id, rows[0].direction) == ("in_entrance", "IN")
+    assert (rows[0].region_id, rows[0].direction) == ("counting_line", "IN")
     assert rows[0].occurred_at == p2.captured_at
     snapshot = Path(rows[0].snapshot_path)
     assert snapshot.exists()
@@ -173,7 +177,7 @@ def test_process_single_in_event_persists_sqlite_snapshot(tmp_path):
     assert np.array_equal(p1.frame, packet(1, 1).frame), "must not mutate capture buffer"
 
 
-def test_out_lane_counts_as_out(tmp_path):
+def test_counting_line_counts_out_direction(tmp_path):
     worker, db, _, _ = make_worker(tmp_path)
     worker.process_packet(packet(1, 4))
     worker.process_packet(packet(2, 5))

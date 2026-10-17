@@ -13,7 +13,7 @@ def _record(*, camera="cam1", minute=0, track_id=1):
         camera_id=camera,
         track_id=track_id,
         event_type=EventType.LINE_CROSSING,
-        region_id="in_entrance",
+        region_id="counting_line",
         direction="IN",
         occurred_at=datetime(2026, 10, 15, 8, minute, tzinfo=UTC),
     )

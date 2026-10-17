@@ -1,7 +1,6 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from math import hypot, isfinite
-from typing import Literal
 
 from multicamera_ai.events.models import Event, EventType
 from multicamera_ai.vision.geometry import (
@@ -25,7 +24,6 @@ class CountLine:
     id: str
     start: Point2D
     end: Point2D
-    count_as: Literal["IN", "OUT"] = "IN"
     in_direction: CrossingDirection = "negative_to_positive"
 
 
