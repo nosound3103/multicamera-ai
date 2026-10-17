@@ -1,0 +1,127 @@
+cameras:
+- id: cam1
+  enabled: true
+  source:
+    type: rtsp
+    uri: rtsp://mediamtx:8554/input_cam1
+  output_url: rtsp://mediamtx:8554/output_cam1
+  lines:
+  - id: counting_line
+    start:
+      x: 0.39634803
+      y: 0.49850514
+    end:
+      x: 0.65430054
+      y: 0.49521974
+  zones:
+  - id: restricted_area
+    points:
+    - x: 0.34836244
+      y: 0.67326019
+    - x: 0.72441105
+      y: 0.66880329
+    - x: 0.86039059
+      y: 1.0
+    - x: 0.26239593
+      y: 1.0
+  model: vehicle
+- id: cam2
+  enabled: true
+  source:
+    type: rtsp
+    uri: rtsp://mediamtx:8554/input_cam2
+  output_url: rtsp://mediamtx:8554/output_cam2
+  lines:
+  - id: counting_line
+    start:
+      x: 0.39881059
+      y: 0.45689004
+    end:
+      x: 0.87038964
+      y: 0.46565111
+  zones:
+  - id: restricted_area
+    points:
+    - x: 0.04112465
+      y: 0.55654726
+    - x: 0.30153971
+      y: 0.57844995
+    - x: 0.2966146
+      y: 0.98145938
+    - x: 0.04235593
+      y: 0.98364964
+  model: vehicle
+- id: cam3
+  enabled: true
+  source:
+    type: rtsp
+    uri: rtsp://mediamtx:8554/input_cam3
+  output_url: rtsp://mediamtx:8554/output_cam3
+  lines:
+  - id: counting_line
+    start:
+      x: 0.31138457
+      y: 0.30598053
+    end:
+      x: 0.53846415
+      y: 0.29025821
+  zones:
+  - id: restricted_area
+    points:
+    - x: 0.02515552
+      y: 0.42934027
+    - x: 0.28554917
+      y: 0.32533108
+    - x: 0.29163542
+      y: 1.0
+    - x: 0.02243601
+      y: 1.0
+  model: vehicle
+- id: cam4
+  enabled: true
+  source:
+    type: rtsp
+    uri: rtsp://mediamtx:8554/input_cam4
+  output_url: rtsp://mediamtx:8554/output_cam4
+  lines:
+  - id: counting_line
+    start:
+      x: 0.25631438
+      y: 0.62042692
+    end:
+      x: 0.60713193
+      y: 0.63977747
+  zones:
+  - id: restricted_area
+    points:
+    - x: 0.51874766
+      y: 0.19108665
+    - x: 0.67828111
+      y: 1.0
+    - x: 0.9735867
+      y: 1.0
+    - x: 0.5466227
+      y: 0.19108665
+  model: vehicle
+runtime:
+  execution: processes
+models:
+  person:
+    weights: ../models/yolo26n.pt
+    device: cpu
+    confidence: 0.5
+    imgsz: 320
+    class_ids:
+    - 0
+    cpu_threads: 1
+  vehicle:
+    weights: ../models/yolo11-newdata.pt
+    device: cpu
+    confidence: 0.5
+    imgsz: 320
+    class_ids:
+    - 0
+    - 1
+    - 2
+    - 3
+    cpu_threads: 1

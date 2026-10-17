@@ -24,8 +24,7 @@ def test_labelme_boundary_coordinates_project_to_last_pixel():
         "imageWidth": 1920,
         "imageHeight": 1080,
         "shapes": [
-            {"label": "in_entrance", "shape_type": "line", "points": [[0, 0], [1920, 1080]]},
-            {"label": "out_entrance", "shape_type": "line", "points": [[0, 1080], [1920, 0]]},
+            {"label": "counting_line", "shape_type": "line", "points": [[0, 0], [1920, 1080]]},
             {
                 "label": "restricted_area",
                 "shape_type": "polygon",
@@ -73,10 +72,14 @@ def test_real_repository_video_to_eof():
         assert worker.stop()
 
 
-def test_demo_cli_keeps_existing_options():
+@pytest.mark.parametrize(
+    "entrypoint",
+    [["-m", "multicamera_ai.vision.demo"], ["scripts/ai_worker_demo.py"]],
+)
+def test_demo_cli_keeps_existing_options(entrypoint):
     pytest.importorskip("cv2")
     result = subprocess.run(
-        [sys.executable, "-m", "multicamera_ai.vision.demo", "--help"],
+        [sys.executable, *entrypoint, "--help"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -141,10 +144,10 @@ def test_worker_cli_reports_capture_failure_without_stopping_healthy_camera(tmp_
         timeout=30,
     )
     assert result.returncode == (0 if mode == "healthy" else 1), result.stdout + result.stderr
-    assert ("ERROR: capture incomplete or failed for:" in result.stdout) == (mode != "healthy")
-    assert "stopped=True" in result.stdout
+    assert ("Capture incomplete or failed for:" in result.stderr) == (mode != "healthy")
+    assert "stopped=True" in result.stderr
     if mode != "all_failed":
-        assert "Final cam1: state=ended frames=5" in result.stdout
+        assert "Final cam1: state=ended frames=5" in result.stderr
         assert cv2.imread(str(tmp_path / "previews/cam1.jpg")) is not None
 
 

@@ -15,7 +15,7 @@ def test_create_line_crossing_event():
         camera_id="cam1",
         track_id=12,
         event_type=EventType.LINE_CROSSING,
-        region_id="in_entrance",
+        region_id="counting_line",
         direction="IN",
     )
 

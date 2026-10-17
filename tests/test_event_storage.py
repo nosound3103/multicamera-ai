@@ -13,7 +13,7 @@ def _record(*, camera="cam1", minute=0, track_id=1):
         camera_id=camera,
         track_id=track_id,
         event_type=EventType.LINE_CROSSING,
-        region_id="in_entrance",
+        region_id="counting_line",
         direction="IN",
         occurred_at=datetime(2026, 10, 15, 8, minute, tzinfo=UTC),
     )
@@ -40,6 +40,21 @@ def test_duplicate_event_id_is_rejected(tmp_path):
     with pytest.raises(sqlite3.IntegrityError):
         storage.insert(record)
     assert len(storage.list_events()) == 1
+
+
+def test_writer_connection_recovers_after_rollback_and_closes(tmp_path):
+    storage = SQLiteEventStore(tmp_path / "events.db")
+    first, second = _record(), _record(track_id=2)
+    with storage.writer():
+        storage.insert(first)
+        with pytest.raises(sqlite3.IntegrityError):
+            storage.insert(first)
+        storage.insert(second)
+        assert {row.event_id for row in storage.list_events()} == {first.event_id, second.event_id}
+        connection = storage._writer.connection
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute("SELECT 1")
+    assert len(storage.list_events()) == 2
 
 
 def test_filter_camera_and_utc_time(tmp_path):

@@ -8,18 +8,22 @@ from multicamera_ai.events import (
     TrackedPoint,
 )
 
-IN_LINE = CountLine(
-    id="in_entrance",
+COUNTING_LINE = CountLine(
+    id="counting_line",
     start=(0.0, 50.0),
-    end=(45.0, 50.0),
-    count_as="IN",
+    end=(100.0, 50.0),
 )
 
-OUT_LINE = CountLine(
-    id="out_entrance",
+LEFT_LINE = CountLine(
+    id="line_a",
+    start=(0.0, 50.0),
+    end=(45.0, 50.0),
+)
+
+RIGHT_LINE = CountLine(
+    id="line_b",
     start=(55.0, 50.0),
     end=(100.0, 50.0),
-    count_as="OUT",
 )
 
 ZONE = RestrictedZone(
@@ -37,7 +41,7 @@ def tick(
     engine,
     index,
     *points,
-    lines=(IN_LINE, OUT_LINE),
+    lines=(LEFT_LINE, RIGHT_LINE),
     zones=(ZONE,),
 ):
     """Simulate one video frame."""
@@ -55,29 +59,29 @@ def test_first_frame_has_no_crossing():
     assert tick(engine, 1, (12, (20, 30))) == []
 
 
-def test_in_line_generates_one_in_event():
+def test_counting_line_generates_in_event():
     engine = EventEngine("cam1")
 
-    tick(engine, 1, (12, (20, 30)), zones=())
-    events = tick(engine, 2, (12, (20, 70)), zones=())
+    tick(engine, 1, (12, (20, 30)), lines=(COUNTING_LINE,), zones=())
+    events = tick(engine, 2, (12, (20, 70)), lines=(COUNTING_LINE,), zones=())
 
     assert len(events) == 1
     assert events[0].event_type == EventType.LINE_CROSSING
     assert events[0].direction == "IN"
-    assert events[0].region_id == "in_entrance"
+    assert events[0].region_id == "counting_line"
     assert events[0].track_id == 12
     assert events[0].camera_id == "cam1"
 
 
-def test_out_line_generates_one_out_event():
+def test_counting_line_generates_out_event():
     engine = EventEngine("cam2")
 
-    tick(engine, 1, (20, (80, 70)), zones=())
-    events = tick(engine, 2, (20, (80, 30)), zones=())
+    tick(engine, 1, (20, (20, 70)), lines=(COUNTING_LINE,), zones=())
+    events = tick(engine, 2, (20, (20, 30)), lines=(COUNTING_LINE,), zones=())
 
     assert len(events) == 1
     assert events[0].direction == "OUT"
-    assert events[0].region_id == "out_entrance"
+    assert events[0].region_id == "counting_line"
 
 
 def test_crossing_outside_finite_segment():
@@ -117,7 +121,7 @@ def test_cooldown_prevents_duplicate_crossing():
     assert len(tick(engine, 7, (3, (20, 30)), zones=())) == 1
 
 
-def test_shared_cooldown_across_lanes():
+def test_lines_have_independent_cooldowns():
     engine = EventEngine("cam1")
 
     tick(engine, 1, (4, (20, 30)), zones=())
@@ -125,9 +129,10 @@ def test_shared_cooldown_across_lanes():
 
     tick(engine, 3, (4, (80, 70)), zones=())
 
-    # Same track cannot be immediately counted again
-    # on the other lane.
-    assert tick(engine, 4, (4, (80, 30)), zones=()) == []
+    # Separate physical lines must not suppress each other.
+    events = tick(engine, 4, (4, (80, 30)), zones=())
+    assert len(events) == 1
+    assert events[0].direction == "OUT"
 
 
 def test_tracks_have_independent_states():
@@ -283,24 +288,8 @@ def test_invalid_threshold_is_rejected():
 
 
 def test_degenerate_line_is_rejected():
-    engine = EventEngine("cam1")
-
     with pytest.raises(ValueError, match="Degenerate"):
-        engine.process_frame(
-            frame_index=1,
-            detections=[
-                TrackedPoint(1, (20, 30)),
-            ],
-            lines=[
-                CountLine(
-                    "in_entrance",
-                    (0, 0),
-                    (0, 0),
-                    "IN",
-                ),
-            ],
-            zones=[],
-        )
+        CountLine("counting_line", (0, 0), (0, 0))
 
 
 def test_nonfinite_anchor_is_rejected():
@@ -319,3 +308,53 @@ def test_negative_track_id_is_rejected():
 
     with pytest.raises(ValueError, match="non-negative"):
         tick(engine, 1, (-1, (20, 20)))
+
+
+@pytest.mark.parametrize("ys,expected", [([30, 70], "IN"), ([70, 30], "OUT")])
+def test_same_line_counts_both_directions(ys, expected):
+    engine = EventEngine("cam1")
+    tick(engine, 1, (1, (20, ys[0])), lines=(COUNTING_LINE,), zones=())
+    events = tick(engine, 2, (1, (20, ys[1])), lines=(COUNTING_LINE,), zones=())
+    assert [e.direction for e in events] == [expected]
+
+
+def test_configured_in_direction_is_respected():
+    line = CountLine("gate", (0, 50), (100, 50), in_direction="positive_to_negative")
+    engine = EventEngine("cam1")
+    tick(engine, 1, (1, (20, 70)), lines=(line,), zones=())
+    assert tick(engine, 2, (1, (20, 30)), lines=(line,), zones=())[0].direction == "IN"
+
+
+def test_zone_occlusion_does_not_duplicate_confirmed_entry():
+    engine = EventEngine("cam1")
+    for i in range(1, 4):
+        tick(engine, i, (1, (20, 20)), lines=())
+    for i in range(4, 10):
+        tick(engine, i, lines=())
+    for i in range(10, 14):
+        assert tick(engine, i, (1, (20, 20)), lines=()) == []
+
+
+def test_visible_occupancy_is_independent_of_event_confirmation_and_release():
+    engine = EventEngine("cam1")
+    for frame in range(1, 4):
+        events = tick(engine, frame, (1, (20, 20)), lines=())
+        assert engine.inside_track_ids == {1}
+        assert len(events) == (1 if frame == 3 else 0)
+
+    tick(engine, 4, (1, (50, 50)), lines=())
+    assert engine.inside_track_ids == set()
+    # A brief exit changes the overlay immediately without rearming the event.
+    assert tick(engine, 5, (1, (20, 20)), lines=()) == []
+    assert engine.inside_track_ids == {1}
+    engine.reset()
+    assert engine.inside_track_ids == set()
+
+
+def test_visible_occupancy_counts_overlapping_zones_once_and_excludes_missing_tracks():
+    engine = EventEngine("cam1")
+    zones = [ZONE, RestrictedZone("overlap", ((0, 0), (30, 0), (30, 30), (0, 30)))]
+    tick(engine, 1, (1, (20, 20)), (2, (10, 40)), (3, (60, 60)), lines=(), zones=zones)
+    assert engine.inside_track_ids == {1, 2}
+    tick(engine, 2, lines=(), zones=zones)
+    assert engine.inside_track_ids == set()

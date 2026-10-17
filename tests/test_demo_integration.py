@@ -16,7 +16,10 @@ np = pytest.importorskip("numpy")
 from multicamera_ai.events import EventType, SQLiteEventStore  # noqa: E402
 
 
-def test_demo_video_writes_sqlite_events_and_snapshots(tmp_path, monkeypatch):
+@pytest.mark.parametrize("max_frames,expected_frames", [(0, 5), (2, 2)])
+def test_demo_video_writes_sqlite_events_and_snapshots(
+    tmp_path, monkeypatch, max_frames, expected_frames
+):
     from multicamera_ai.vision import demo
 
     source = tmp_path / "input.mp4"
@@ -33,8 +36,12 @@ def test_demo_video_writes_sqlite_events_and_snapshots(tmp_path, monkeypatch):
         id="cam1",
         source=SimpleNamespace(type="file", uri=str(source)),
         lines=[
-            SimpleNamespace(id="in_entrance", start=point(0, 0.5), end=point(0.4, 0.5)),
-            SimpleNamespace(id="out_entrance", start=point(0.6, 0.5), end=point(1, 0.5)),
+            SimpleNamespace(
+                id="counting_line",
+                start=point(0, 0.5),
+                end=point(1, 0.5),
+                in_direction="negative_to_positive",
+            ),
         ],
         zones=[
             SimpleNamespace(
@@ -51,9 +58,16 @@ def test_demo_video_writes_sqlite_events_and_snapshots(tmp_path, monkeypatch):
     fake_config = SimpleNamespace(
         cameras=[camera],
         model=SimpleNamespace(
-            weights="unused.pt", confidence=0.4, imgsz=640, class_ids=[0, 2], device="cpu"
+            weights="unused.pt",
+            confidence=0.4,
+            imgsz=640,
+            class_ids=[0, 2],
+            device="cpu",
+            half=False,
+            cpu_threads=1,
         ),
     )
+    fake_config.model_for = lambda camera: fake_config.model
     monkeypatch.setattr(demo, "load_config", lambda _: fake_config)
 
     class Scalar:
@@ -76,6 +90,9 @@ def test_demo_video_writes_sqlite_events_and_snapshots(tmp_path, monkeypatch):
             self.xyxy = [Tensor(coords)]
 
     class FakeResult:
+        def cpu(self):
+            return self
+
         def __init__(self, frame, boxes):
             self.frame = frame
             self.boxes = Boxes(boxes)
@@ -94,8 +111,13 @@ def test_demo_video_writes_sqlite_events_and_snapshots(tmp_path, monkeypatch):
             return iter(self.boxes)
 
     class Model:
+        names = {0: "person", 2: "car"}
+
         def __init__(self, weights):
             self.n = 0
+
+        def add_callback(self, name, callback):
+            pass
 
         def track(self, frame, **kwargs):
             self.n += 1
@@ -114,15 +136,21 @@ def test_demo_video_writes_sqlite_events_and_snapshots(tmp_path, monkeypatch):
         output=str(output),
         db=str(db_path),
         snapshots=str(tmp_path / "snapshots"),
-        max_frames=5,
+        max_frames=max_frames,
     )
-    demo.run_demo(args)
+    assert demo.run_demo(args) == expected_frames
 
     records = SQLiteEventStore(db_path).list_events()
-    assert sorted(e.event_type.value for e in records) == [
-        EventType.LINE_CROSSING.value,
-        EventType.ZONE_ENTRY.value,
-    ]
+    expected_events = [EventType.LINE_CROSSING.value]
+    if expected_frames >= 3:
+        expected_events.append(EventType.ZONE_ENTRY.value)
+    assert sorted(e.event_type.value for e in records) == expected_events
     assert next(e.direction for e in records if e.event_type == EventType.LINE_CROSSING) == "IN"
     assert all(Path(e.snapshot_path).exists() for e in records)
     assert output.exists() and output.stat().st_size > 0
+    capture = cv2.VideoCapture(str(output))
+    try:
+        assert int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) == expected_frames
+        assert capture.get(cv2.CAP_PROP_FPS) == pytest.approx(15)
+    finally:
+        capture.release()

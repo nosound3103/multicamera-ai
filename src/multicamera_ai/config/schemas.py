@@ -77,6 +77,7 @@ class ForbiddenZone(StrictModel):
 
 
 class VideoSource(StrictModel):
+    timestamp_watermark: bool = False
     type: Literal["rtsp", "file", "webcam"]
     uri: str | None = None
     index: int | None = Field(default=None, ge=0)
@@ -100,6 +101,8 @@ class VideoSource(StrictModel):
 
 
 class YOLOConfig(StrictModel):
+    half: bool = False
+    cpu_threads: int = Field(default=1, ge=1, le=64)
     weights: str = Field(min_length=1)
     device: str = Field(default="cpu", min_length=1)
     confidence: float = Field(gt=0.0, le=1.0)
@@ -119,6 +122,7 @@ class YOLOConfig(StrictModel):
 
 
 class CameraConfig(StrictModel):
+    model: str | None = Field(default=None, min_length=1)
     id: str = Field(
         min_length=1,
         pattern=r"^[a-z][a-z0-9_-]*$",
@@ -148,12 +152,51 @@ class CameraConfig(StrictModel):
         return self
 
 
+class RuntimeConfig(StrictModel):
+    execution: Literal["threads", "processes"] = "threads"
+    database: str = "storage/events.db"
+    snapshots: str = "storage/snapshots"
+    log_dir: str = "logs"
+    reconnect_delay: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    shutdown_timeout: float = Field(default=12.0, gt=0, allow_inf_nan=False)
+    event_queue_size: int = Field(default=8, ge=1)
+    host: str = "0.0.0.0"
+    port: int = Field(default=8000, ge=1, le=65535)
+
+
+class StreamingConfig(StrictModel):
+    enabled: bool = True
+    ffmpeg: str = "ffmpeg"
+    fps: int = Field(default=15, ge=1, le=120)
+    width: int = Field(default=960, ge=640, le=3840, multiple_of=2)
+    height: int = Field(default=540, ge=120, le=2160, multiple_of=2)
+    write_timeout: float = Field(default=3.0, gt=0, allow_inf_nan=False)
+    max_frame_age: float = Field(default=0.8, gt=0, allow_inf_nan=False)
+    watermark: bool = False
+
+
 class AppConfig(StrictModel):
-    model: YOLOConfig
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    streaming: StreamingConfig = Field(default_factory=StreamingConfig)
+    model: YOLOConfig | None = None
+    models: dict[str, YOLOConfig] = Field(default_factory=dict)
     cameras: list[CameraConfig] = Field(min_length=1)
+
+    def model_for(self, camera: CameraConfig) -> YOLOConfig:
+        """Resolve a camera profile without sharing its model or tracker instance."""
+        if camera.model is not None:
+            return self.models[camera.model]
+        if self.model is None:
+            raise ValueError(f"Camera {camera.id} requires a model profile")
+        return self.model
 
     @model_validator(mode="after")
     def validate_cameras(self) -> Self:
+        for camera in self.cameras:
+            if camera.model is not None and camera.model not in self.models:
+                raise ValueError(f"Camera {camera.id}: unknown model profile '{camera.model}'")
+            if camera.model is None and self.model is None:
+                raise ValueError(f"Camera {camera.id} requires a model profile or default model")
         ids = [camera.id for camera in self.cameras]
 
         if len(ids) != len(set(ids)):

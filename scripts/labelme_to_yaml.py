@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import math
 from pathlib import Path
 
@@ -8,8 +9,7 @@ import yaml
 from multicamera_ai.config import AppConfig
 
 EXPECTED_SHAPES = {
-    "in_entrance": "line",
-    "out_entrance": "line",
+    "counting_line": "line",
     "restricted_area": "polygon",
 }
 
@@ -51,7 +51,7 @@ def normalize_point(point: list, width: int, height: int) -> dict[str, float]:
 
 
 def convert_labelme(data: dict) -> tuple[list[dict], list[dict]]:
-    """Extract two counting lines and one polygon from Labelme data."""
+    """Extract one bidirectional counting line and one polygon from Labelme data."""
     width = data.get("imageWidth")
     height = data.get("imageHeight")
 
@@ -94,8 +94,7 @@ def convert_labelme(data: dict) -> tuple[list[dict], list[dict]]:
         raise ValueError(f"Missing Labelme labels: {', '.join(sorted(missing))}")
 
     lines = [
-        {"id": name, "start": found[name][0], "end": found[name][1]}
-        for name in ("in_entrance", "out_entrance")
+        {"id": name, "start": found[name][0], "end": found[name][1]} for name in ("counting_line",)
     ]
     zones = [{"id": "restricted_area", "points": found["restricted_area"]}]
     return lines, zones
@@ -127,8 +126,7 @@ def update_yaml(labelme_path: Path, config_path: Path, camera_id: str) -> None:
         yaml.safe_dump(config, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
-    print(f"Updated {camera_id} in {config_path}")
-    print("Lines: in_entrance, out_entrance | Zone: restricted_area")
+    logging.getLogger(__name__).info("Updated %s in %s", camera_id, config_path)
 
 
 def main() -> None:

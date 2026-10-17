@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 import threading
 import time
@@ -20,6 +21,8 @@ class Capture(Protocol):
     def isOpened(self) -> bool: ...  # noqa: N802 - OpenCV API
 
     def read(self) -> tuple[bool, Any]: ...
+
+    def grab(self) -> bool: ...
 
     def release(self) -> None: ...
 
@@ -66,7 +69,15 @@ def opencv_capture_factory(source: str | int) -> Capture:
     """
     import cv2
 
+    # Each camera already has its own workers; nested OpenCV thread pools
+    # otherwise compete with inference, encoders and output decode probes.
+    cv2.setNumThreads(1)
     if isinstance(source, str) and source.lower().startswith(("rtsp://", "rtsps://")):
+        os.environ.setdefault(
+            "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+            "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|max_delay;0|reorder_queue_size;0"
+            "|analyzeduration;100000|probesize;32768",
+        )
         return cv2.VideoCapture(
             source,
             cv2.CAP_FFMPEG,
@@ -75,8 +86,12 @@ def opencv_capture_factory(source: str | int) -> Capture:
                 3000,
                 cv2.CAP_PROP_READ_TIMEOUT_MSEC,
                 3000,
+                cv2.CAP_PROP_N_THREADS,
+                1,
             ],
         )
+    if isinstance(source, str):
+        return cv2.VideoCapture(source, cv2.CAP_FFMPEG, [cv2.CAP_PROP_N_THREADS, 1])
     return cv2.VideoCapture(source)
 
 
@@ -94,8 +109,10 @@ class CameraWorker:
         source: str | int,
         *,
         is_file: bool = False,
+        timestamp_watermark: bool = False,
         reconnect_delay: float = 1.0,
         file_realtime: bool = True,
+        file_max_fps: float | None = None,
         capture_factory: CaptureFactory | None = None,
     ) -> None:
         if not re.fullmatch(r"[a-z][a-z0-9_-]*", camera_id):
@@ -110,12 +127,18 @@ class CameraWorker:
             raise ValueError("webcam index must be non-negative")
         if is_file and isinstance(source, int):
             raise ValueError("File source must be a path")
+        if file_max_fps is not None and (
+            not is_file or not file_realtime or not math.isfinite(file_max_fps) or file_max_fps <= 0
+        ):
+            raise ValueError("file_max_fps requires a realtime file and a positive finite rate")
 
         self.camera_id = camera_id
         self.source = source
+        self.timestamp_watermark = timestamp_watermark
         self.is_file = is_file
         self.reconnect_delay = reconnect_delay
         self.file_realtime = file_realtime
+        self.file_max_fps = file_max_fps
         self._validate_file = capture_factory is None
         self._capture_factory = capture_factory or opencv_capture_factory
         self._lifecycle_lock = threading.Lock()
@@ -209,7 +232,7 @@ class CameraWorker:
             fps = 0.0
             if self._state == CameraState.RUNNING and len(self._recent_frame_times) >= 2:
                 span = self._recent_frame_times[-1] - self._recent_frame_times[0]
-                if span > 0:
+                if span > 0 and time.monotonic() - self._recent_frame_times[-1] < 2.0:
                     fps = (len(self._recent_frame_times) - 1) / span
             return CameraStatus(
                 camera_id=self.camera_id,
@@ -257,6 +280,7 @@ class CameraWorker:
                     attempt = 0
                     frame_number = 0
                     frame_period = self._file_frame_period(capture) if self.is_file else None
+                    next_output = 0.0
                     deadline = time.monotonic()
 
                     while not self._stop_event.is_set():
@@ -267,6 +291,17 @@ class CameraWorker:
                             # Prevent unbounded catch-up after a scheduling pause.
                             deadline = max(deadline, time.monotonic() - frame_period)
 
+                        # Decode intervening frames without BGR conversion/copy when
+                        # replaying a high-FPS file into a slower RTSP publisher.
+                        if (
+                            self.file_max_fps is not None
+                            and frame_number * frame_period + 1e-9 < next_output
+                        ):
+                            if not capture.grab():
+                                self._set_state(CameraState.ENDED)
+                                return
+                            frame_number += 1
+                            continue
                         ok, frame = capture.read()
                         if not ok or frame is None:
                             if self.is_file:
@@ -275,6 +310,13 @@ class CameraWorker:
                             raise OSError("capture read failed")
 
                         captured_at = datetime.now(UTC)
+                        if self.timestamp_watermark:
+                            from multicamera_ai.telemetry import read_stamp
+
+                            stamp = read_stamp(frame)
+                            if stamp is None:
+                                raise ValueError("Source timestamp watermark missing or corrupt")
+                            captured_at = stamp[0]
                         with self._condition:
                             self._sequence += 1
                             self._recent_frame_times.append(time.monotonic())
@@ -287,6 +329,8 @@ class CameraWorker:
                             )
                             self._condition.notify_all()
                         frame_number += 1
+                        if self.file_max_fps is not None:
+                            next_output += 1.0 / self.file_max_fps
 
                 except Exception as exc:
                     # Avoid exposing RTSP URLs (which may contain credentials).

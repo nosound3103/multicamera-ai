@@ -47,6 +47,12 @@ class FakeCapture:
     def release(self):
         self.released = True
 
+    def grab(self):
+        if not self.frames:
+            return False
+        self.frames.pop(0)
+        return True
+
     def get(self, prop):
         assert prop == 5
         return self.fps
@@ -71,6 +77,27 @@ def test_file_reads_to_eof_without_reconnecting():
     assert worker.stop()
     assert captures[0].released
     assert len(captures) == 1
+
+
+@pytest.mark.parametrize("fps,total,expected", [(60, 12, 3), (30, 12, 6), (10, 4, 4)])
+def test_file_rate_limit_skips_conversion_without_speeding_up_playback(fps, total, expected):
+    capture = FakeCapture(range(total), delay=0, fps=fps)
+    worker = CameraWorker(
+        "cam1", "video.mp4", is_file=True, file_max_fps=15, capture_factory=lambda _: capture
+    )
+    started = time.monotonic()
+    worker.start()
+    assert wait_until(lambda: worker.status().state == CameraState.ENDED)
+    assert worker.stop()
+    assert worker.status().frames_received == expected
+    assert capture.read_count <= expected + 1
+    assert time.monotonic() - started >= (total - 1) / fps - 0.02
+
+
+@pytest.mark.parametrize("rate", [0, -1, float("nan"), float("inf")])
+def test_invalid_file_rate_limit(rate):
+    with pytest.raises(ValueError, match="file_max_fps"):
+        CameraWorker("cam1", "video.mp4", is_file=True, file_max_fps=rate)
 
 
 def test_live_capture_reconnects_with_new_session_id():
@@ -338,8 +365,9 @@ def test_stop_restart_and_running_fps():
     worker = CameraWorker("cam1", 0, capture_factory=factory)
     worker.start()
     try:
-        assert wait_until(lambda: worker.status().frames_received >= 3)
-        assert 0 < worker.status().capture_fps < 1000
+        assert wait_until(
+            lambda: worker.status().frames_received >= 3 and 0 < worker.status().capture_fps < 1000
+        )
         first_sequence = worker.get_latest().sequence
         worker.start()  # Active start is idempotent.
         assert len(captures) == 1

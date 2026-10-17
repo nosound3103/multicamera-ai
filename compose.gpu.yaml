@@ -1,0 +1,14 @@
+services:
+  replay:
+    image: multi-camera-ai:cu128
+  ai:
+    image: multi-camera-ai:cu128
+    build:
+      args:
+        TORCH_BACKEND: cu128
+    gpus: all
+    command: ["--config", "config/cameras.docker.gpu.yaml"]
+  benchmark:
+    image: multi-camera-ai:cu128
+    gpus: all
+    command: ["--config", "config/cameras.docker.gpu.yaml", "--counts", "1", "4", "8", "--modes", "threads", "processes", "--source-watermark", "--server", "rtsp://mediamtx:8554", "--output", "artifacts/docker-benchmark/results.json"]
