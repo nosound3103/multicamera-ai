@@ -129,6 +129,7 @@ def run_camera(config, camera, stop_event, channel, child_logging=False):
                 "updated_at": time.time(),
             },
         )
+        logger.info("Camera stopped camera=%s clean=%s", camera.id, clean)
         if not clean:
             logger.error("Camera shutdown timed out camera=%s", camera.id)
     return clean
