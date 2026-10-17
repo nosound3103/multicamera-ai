@@ -8,11 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libglib2
 
 FROM base AS dependencies
 ARG TORCH_BACKEND=cpu
-COPY pyproject.toml uv.lock README.md ./
-COPY src ./src
+ENV UV_COMPILE_BYTECODE=1
+COPY pyproject.toml uv.lock ./
 # The lock uses CPU wheels. CUDA builds replace only the pinned PyTorch pair.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --extra vision --no-editable \
+    uv sync --frozen --no-dev --extra vision --no-install-project \
     && case "$TORCH_BACKEND" in \
         cpu) ;; \
         cu128) uv pip install --python /app/.venv/bin/python \
@@ -24,6 +24,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv pip check --python /app/.venv/bin/python
 
 FROM base AS runtime
+ENV PYTHONPATH=/app/src
 COPY --from=dependencies /app/.venv /app/.venv
 COPY src ./src
 COPY config ./config

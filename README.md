@@ -88,6 +88,6 @@ python scripts/labelme_to_yaml.py assets/cam_3/cam_3.json --config config/camera
 
 The replay service reads enabled file sources from `cameras.local.yaml` and
 publishes each as `input_<camera-id>`. Keep matching camera IDs in Docker's RTSP
-config. Use `--count 4` to replay only the first four cameras for a 1?4 test.
+config. Use `--count 4` to replay only the first four cameras for a 1-4 camera test.
 Each camera owns its model instance and tracker even when sharing a profile;
 selecting a profile does not implement shared or batched inference.
