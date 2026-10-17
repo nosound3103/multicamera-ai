@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import sys
 from datetime import datetime
 
 from multicamera_ai.events import SQLiteEventStore
@@ -26,7 +27,10 @@ def main() -> None:
     rows = SQLiteEventStore(args.db).list_events(
         camera_id=args.camera, start=args.start, end=args.end, limit=args.limit
     )
-    print(json.dumps([row.model_dump(mode="json") for row in rows], ensure_ascii=False, indent=2))
+    sys.stdout.write(
+        json.dumps([row.model_dump(mode="json") for row in rows], ensure_ascii=False, indent=2)
+        + "\n"
+    )
 
 
 if __name__ == "__main__":

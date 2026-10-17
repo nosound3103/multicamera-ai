@@ -7,6 +7,9 @@ from pathlib import Path
 from multicamera_ai.cameras import CameraManager, CameraState
 from multicamera_ai.config import load_config
 from multicamera_ai.config.schemas import VideoSource
+from multicamera_ai.service import configure_logging
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> int:
@@ -31,8 +34,8 @@ def main() -> int:
         parser.error("--seconds must be in (0, 3600]")
     if not math.isfinite(args.reconnect_delay) or args.reconnect_delay <= 0:
         parser.error("--reconnect-delay must be positive and finite")
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     config = load_config(args.config)
+    configure_logging(config.runtime.log_dir, "capture-demo")
     cameras = {camera.id: camera for camera in config.cameras}
     for override in args.source_override:
         camera_id, separator, filename = override.partition("=")
@@ -55,7 +58,7 @@ def main() -> int:
     try:
         while time.monotonic() < deadline:
             for camera_id, status in manager.status().items():
-                print(
+                logger.info(
                     f"{camera_id}: state={status.state} frames={status.frames_received} "
                     f"capture_fps={status.capture_fps:.1f} reconnects={status.reconnect_attempts} "
                     f"session={status.session_id} error={status.last_error}"
@@ -69,10 +72,9 @@ def main() -> int:
                 for s in manager.status().values()
             ):
                 break
-            print("-")
             time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
     except KeyboardInterrupt:
-        print("Stopping workers (Ctrl+C)")
+        logger.info("Stopping workers (Ctrl+C)")
         exit_code = 130
     finally:
         # Include short files that reached EOF between polling iterations.
@@ -93,15 +95,15 @@ def main() -> int:
             )
         ]
         if failed_cameras:
-            print(f"ERROR: capture incomplete or failed for: {', '.join(failed_cameras)}")
+            logger.error("Capture incomplete or failed for: %s", ", ".join(failed_cameras))
             exit_code = exit_code or 1
         stopped = manager.stop_all(timeout=5.0)
         for camera_id, joined in stopped.items():
             if not joined:
-                print(f"WARNING: {camera_id} capture did not stop within 5 s")
+                logger.warning("%s capture did not stop within 5 s", camera_id)
                 exit_code = exit_code or 1
         for camera_id, status in manager.status().items():
-            print(
+            logger.info(
                 f"Final {camera_id}: state={status.state} frames={status.frames_received} "
                 f"session={status.session_id} stopped={stopped[camera_id]}"
             )
@@ -112,10 +114,10 @@ def main() -> int:
             for camera_id, frame in previews.items():
                 output = args.preview_dir / f"{camera_id}.jpg"
                 if not cv2.imwrite(str(output), frame):
-                    print(f"WARNING: failed to save {output}")
+                    logger.warning("Failed to save %s", output)
                     exit_code = exit_code or 1
                 else:
-                    print(f"Saved {output}")
+                    logger.info("Saved %s", output)
 
     return exit_code
 

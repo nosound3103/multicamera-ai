@@ -140,10 +140,10 @@ def test_worker_cli_reports_capture_failure_without_stopping_healthy_camera(tmp_
         timeout=30,
     )
     assert result.returncode == (0 if mode == "healthy" else 1), result.stdout + result.stderr
-    assert ("ERROR: capture incomplete or failed for:" in result.stdout) == (mode != "healthy")
-    assert "stopped=True" in result.stdout
+    assert ("Capture incomplete or failed for:" in result.stderr) == (mode != "healthy")
+    assert "stopped=True" in result.stderr
     if mode != "all_failed":
-        assert "Final cam1: state=ended frames=5" in result.stdout
+        assert "Final cam1: state=ended frames=5" in result.stderr
         assert cv2.imread(str(tmp_path / "previews/cam1.jpg")) is not None
 
 
