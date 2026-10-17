@@ -44,7 +44,7 @@ container recreation. `docker compose down` sends SIGTERM to the API and allows
 60 seconds for pipeline cleanup. The replay and benchmark tools receive SIGINT
 so their cleanup blocks run too.
 
-### Benchmark 1–4 cameras
+### Benchmark 1â€“4 cameras
 
 Stop `ai` before benchmarking to avoid running two sets of inference workers.
 Start the replay sources and run the benchmark container on the same network:
@@ -79,7 +79,8 @@ its source and optional `lines`/`zones`. No camera-count limit is hard-coded.
 One `counting_line` counts both IN and OUT. With left-to-right endpoints,
 `in_direction: negative_to_positive` means motion toward the positive side
 (roughly down the image) is IN; reverse the setting to swap the directions.
-The overlay draws arrows for both directions. Import the corresponding
+The overlay keeps the line clear; IN/OUT counters and AI processing FPS appear
+in the camera panel. Import the corresponding
 Labelme `counting_line` and `restricted_area` into an existing camera with:
 
 ```sh

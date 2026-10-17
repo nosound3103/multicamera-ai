@@ -346,7 +346,13 @@ class AIWorker:
                     assert event.direction is not None
                     self._counts[event.direction] += 1
 
-        draw_hud(annotated, self.camera.id, self._counts, len(inside_ids))
+        draw_hud(
+            annotated,
+            self.camera.id,
+            self._counts,
+            len(inside_ids),
+            fps=self.status().processing_fps,
+        )
         output = AIFrame(
             camera_id=self.camera.id,
             sequence=packet.sequence,

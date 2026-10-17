@@ -85,46 +85,15 @@ def draw_regions(image: np.ndarray, lines, zones) -> None:
             3,
             cv2.LINE_AA,
         )
-        cv2.putText(
-            image,
-            f"{line.id}: IN / OUT",
-            (max(0, round(line.start[0])), max(20, round(line.start[1]) - 10)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            color,
-            2,
-            cv2.LINE_AA,
-        )
-        # Positive side is the left normal in image coordinates (y points down).
-        dx, dy = line.end[0] - line.start[0], line.end[1] - line.start[1]
-        length = math.hypot(dx, dy)
-        if length:
-            sign = 1 if line.in_direction == "negative_to_positive" else -1
-            nx, ny = -dy / length * sign, dx / length * sign
-            mx = (line.start[0] + line.end[0]) / 2
-            my = (line.start[1] + line.end[1]) / 2
-            for direction, offset, sense in (("IN", -18, 1), ("OUT", 18, -1)):
-                cx, cy = mx + dx / length * offset, my + dy / length * offset
-                start = (round(cx - nx * 24 * sense), round(cy - ny * 24 * sense))
-                end = (round(cx + nx * 24 * sense), round(cy + ny * 24 * sense))
-                cv2.arrowedLine(image, start, end, LINE_COLORS[direction], 2, tipLength=0.25)
-                cv2.putText(
-                    image,
-                    direction,
-                    end,
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    LINE_COLORS[direction],
-                    1,
-                    cv2.LINE_AA,
-                )
 
 
-def draw_hud(image: np.ndarray, camera_id: str, counts: dict[str, int], inside: int) -> None:
+def draw_hud(
+    image: np.ndarray, camera_id: str, counts: dict[str, int], inside: int, *, fps: float = 0.0
+) -> None:
     """Draw session counters (persisted crossing events) and visible zone occupancy."""
     height, width = image.shape[:2]
     x1, y1 = 14, 42
-    x2, y2 = min(width - 4, 330), min(height - 4, 144)
+    x2, y2 = min(width - 4, 330), min(height - 4, 174)
     if x2 <= x1 or y2 <= y1:
         return
 
@@ -133,6 +102,7 @@ def draw_hud(image: np.ndarray, camera_id: str, counts: dict[str, int], inside: 
     cv2.rectangle(image, (x1, y1), (x2, y2), (180, 180, 180), 1)
     for text, dy, font_scale, color in (
         (f"CAMERA {camera_id}", 25, 0.62, (255, 255, 255)),
+        (f"FPS: {fps:.1f}", 114, 0.55, (255, 255, 255)),
         (f"IN {counts['IN']}     OUT {counts['OUT']}", 55, 0.70, (255, 255, 255)),
         (
             f"RESTRICTED: {inside} inside",
@@ -280,7 +250,13 @@ def run_demo(args: argparse.Namespace) -> None:
                 if event.event_type == EventType.LINE_CROSSING:
                     assert event.direction is not None
                     next_counts[event.direction] += 1
-            draw_hud(annotated, camera.id, next_counts, len(inside_tracks))
+            draw_hud(
+                annotated,
+                camera.id,
+                next_counts,
+                len(inside_tracks),
+                fps=frame_index / max(time.perf_counter() - started, 1e-6),
+            )
 
             for event in events:
                 recorded = recorder.record(event, annotated)
