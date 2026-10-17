@@ -170,6 +170,8 @@ def test_process_single_in_event_persists_sqlite_snapshot(tmp_path):
     assert output.sequence == 2
     assert worker.status().counts == {"IN": 1, "OUT": 0}
     assert worker.status().saved_events == 1
+    assert worker.status().state == AIState.RUNNING
+    assert worker.status().processing_fps > 0
     assert len(models) == 1
     assert calls[0][1]["persist"] is True
     assert calls[0][1]["tracker"] == "bytetrack.yaml"

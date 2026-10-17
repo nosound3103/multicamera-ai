@@ -1,326 +1,247 @@
+from __future__ import annotations
+
 import argparse
 import logging
 import math
-import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import cv2
-import numpy as np
 
+from multicamera_ai.cameras import CameraState, CameraWorker
+from multicamera_ai.cameras.worker import FramePacket
 from multicamera_ai.config import load_config
-from multicamera_ai.events import (
-    CountLine,
-    EventEngine,
-    EventRecorder,
-    EventType,
-    RestrictedZone,
-    SnapshotWriter,
-    SQLiteEventStore,
-    TrackedPoint,
-)
-from multicamera_ai.vision.geometry import (
-    bottom_center,
-    normalized_to_pixel,
-    point_in_polygon,
-)
+from multicamera_ai.events import EventRecorder, SnapshotWriter, SQLiteEventStore
+from multicamera_ai.pipeline import AIState, AIWorker
 
 logger = logging.getLogger(__name__)
 
-COUNTING_LINE_COLOR = (80, 205, 40)
 
+def resolve_source(camera: Any, input_override: str | None) -> tuple[str | int, bool]:
+    """Resolve one source, leaving deployment YAML unchanged."""
+    if input_override is not None:
+        if input_override.lower().startswith(("rtsp://", "rtsps://")):
+            return input_override, False
+        return input_override, True
 
-def project_regions(camera, width: int, height: int):
-    """Convert validated YAML normalized coordinates to pixel-space regions."""
-    lines = [
-        CountLine(
-            id=line.id,
-            start=normalized_to_pixel((line.start.x, line.start.y), width, height),
-            end=normalized_to_pixel((line.end.x, line.end.y), width, height),
-            in_direction=line.in_direction,
-        )
-        for line in camera.lines
-    ]
-    zones = [
-        RestrictedZone(
-            id=zone.id,
-            points=tuple(
-                normalized_to_pixel((point.x, point.y), width, height) for point in zone.points
-            ),
-        )
-        for zone in camera.zones
-    ]
-    return lines, zones
-
-
-def draw_regions(image: np.ndarray, lines, zones) -> None:
-    """Draw bidirectional counting lines and transparent zone polygons."""
-    overlay = image.copy()
-    for zone in zones:
-        cv2.fillPoly(
-            overlay,
-            [np.asarray(zone.points, dtype=np.int32)],
-            (0, 0, 255),
-        )
-    cv2.addWeighted(overlay, 0.12, image, 0.88, 0, dst=image)
-
-    for zone in zones:
-        cv2.polylines(
-            image,
-            [np.asarray(zone.points, dtype=np.int32)],
-            True,
-            (40, 40, 255),
-            2,
-            cv2.LINE_AA,
-        )
-
-    for line in lines:
-        cv2.line(
-            image,
-            tuple(map(round, line.start)),
-            tuple(map(round, line.end)),
-            COUNTING_LINE_COLOR,
-            3,
-            cv2.LINE_AA,
-        )
-
-
-def draw_hud(
-    image: np.ndarray, camera_id: str, counts: dict[str, int], inside: int, *, fps: float = 0.0
-) -> None:
-    """Draw session counters (persisted crossing events) and visible zone occupancy."""
-    height, width = image.shape[:2]
-    x1, y1 = 14, 42
-    x2, y2 = min(width - 4, 330), min(height - 4, 174)
-    if x2 <= x1 or y2 <= y1:
-        return
-
-    roi = image[y1:y2, x1:x2]
-    cv2.addWeighted(np.zeros_like(roi), 0.70, roi, 0.30, 0, dst=roi)
-    cv2.rectangle(image, (x1, y1), (x2, y2), (180, 180, 180), 1)
-    for text, dy, font_scale, color in (
-        (f"CAMERA {camera_id}", 25, 0.62, (255, 255, 255)),
-        (f"FPS: {fps:.1f}", 114, 0.55, (255, 255, 255)),
-        (f"IN {counts['IN']}     OUT {counts['OUT']}", 55, 0.70, (255, 255, 255)),
-        (
-            f"RESTRICTED: {inside} inside",
-            84,
-            0.52,
-            (60, 60, 255) if inside else (190, 190, 190),
-        ),
-    ):
-        cv2.putText(
-            image,
-            text,
-            (x1 + 10, y1 + dy),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            font_scale,
-            color,
-            2,
-            cv2.LINE_AA,
-        )
-
-
-def run_demo(args: argparse.Namespace) -> None:
-    # Import YOLO on actual execution; storage/unit tests need not install it.
-    from ultralytics import YOLO
-
-    config = load_config(args.config)
-    camera = next((c for c in config.cameras if c.id == args.camera), None)
-    if camera is None:
-        raise ValueError(f"Unknown camera ID: {args.camera}")
-
-    model_config = config.model_for(camera)
-
-    if args.input is not None:
-        source: str | int = args.input
-    elif camera.source.type == "webcam":
+    if camera.source.type == "webcam":
         if camera.source.index is None:
-            raise ValueError("Webcam source requires index")
-        source = camera.source.index
-    else:
-        if not camera.source.uri:
-            raise ValueError("Video source requires uri")
-        source = camera.source.uri
+            raise ValueError("Webcam requires source.index")
+        return camera.source.index, False
 
-    if isinstance(source, str) and "://" not in source:
-        source = str(Path(source).expanduser().resolve())
-        if not Path(source).is_file():
-            raise FileNotFoundError(f"Input video not found: {source}")
+    if not camera.source.uri:
+        raise ValueError(f"{camera.id}: source.uri is missing")
+    return camera.source.uri, camera.source.type == "file"
 
-    output_path = Path(args.output)
-    if isinstance(source, str) and "://" not in source:
-        if Path(source).resolve() == output_path.resolve():
-            raise ValueError("Input and output must be different paths")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    storage = SQLiteEventStore(args.db)
-    recorder = EventRecorder(storage, SnapshotWriter(Path(args.snapshots)))
-    engine = EventEngine(camera_id=camera.id)
-    counts = {"IN": 0, "OUT": 0}
+class _MP4Writer:
+    def __init__(self, path: Path, fps: float) -> None:
+        if not math.isfinite(fps) or fps <= 0:
+            raise ValueError("Output FPS must be positive and finite")
+        self.path = path
+        self.fps = fps
+        self.writer: cv2.VideoWriter | None = None
+        self.frames_written = 0
 
+    def write(self, image: Any) -> None:
+        height, width = image.shape[:2]
+        if self.writer is None:
+            self.writer = cv2.VideoWriter(
+                str(self.path), cv2.VideoWriter.fourcc(*"mp4v"), self.fps, (width, height)
+            )
+            if not self.writer.isOpened():
+                self.writer.release()
+                self.writer = None
+                raise RuntimeError(f"Cannot open video output {self.path}")
+        self.writer.write(image)
+        self.frames_written += 1
+
+    def close(self) -> None:
+        if self.writer is not None:
+            self.writer.release()
+            self.writer = None
+
+
+def run_file(
+    *,
+    source: str,
+    camera: Any,
+    model_config: Any,
+    recorder: Any,
+    output_path: Path,
+    max_frames: int,
+    output_fps: float | None,
+) -> int:
+    """Offline file: sequential read -> process -> write, NO latest-frame drops.
+
+    Deliberately calls AIWorker.process_packet() without starting camera or AI
+    threads. The Event Engine and tracker implementation stay exactly the same.
+    """
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         cap.release()
-        raise RuntimeError(f"Could not open video source for {camera.id}")
+        raise RuntimeError(f"Cannot open video file: {source}")
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if not math.isfinite(fps) or fps <= 0:
-        fps = 25.0
-
-    writer = None
-    frame_index = 0
-    started = time.perf_counter()
-    cached_size: tuple[int, int] | None = None
-    lines: list[CountLine] = []
-    zones: list[RestrictedZone] = []
-
+    writer: _MP4Writer | None = None
     try:
-        model = YOLO(model_config.weights)
-        while True:
+        source_fps = float(cap.get(cv2.CAP_PROP_FPS))
+        if not math.isfinite(source_fps) or source_fps <= 0:
+            logger.warning("Source FPS unavailable, assuming 25 FPS for output")
+            source_fps = 25.0
+
+        # CameraWorker is a source adapter here; it is NOT started for MP4.
+        # This avoids a background capture thread advancing ahead of YOLO.
+        source_adapter = CameraWorker(camera.id, source, is_file=True)
+        worker = AIWorker(
+            camera=camera,
+            model_config=model_config,
+            source=source_adapter,
+            recorder=recorder,
+        )
+        writer = _MP4Writer(output_path, output_fps or source_fps)
+
+        # File events have a synthetic time axis anchored to processing start.
+        # This is not the original camera recording timestamp.
+        timeline_start = datetime.now(UTC)
+        sequence = 0
+        while max_frames == 0 or sequence < max_frames:
             ok, frame = cap.read()
-            if not ok:
+            if not ok or frame is None:
                 break
-            frame_index += 1
-
-            result = model.track(
-                frame,
-                persist=True,
-                tracker="bytetrack.yaml",
-                conf=model_config.confidence,
-                imgsz=model_config.imgsz,
-                classes=model_config.class_ids,
-                device=model_config.device,
-                verbose=False,
-            )[0]
-
-            annotated = result.plot()
-            height, width = annotated.shape[:2]
-            if cached_size != (width, height):
-                lines, zones = project_regions(camera, width, height)
-                cached_size = (width, height)
-
-            detections: list[TrackedPoint] = []
-            visible_objects: list[tuple[int, tuple[float, float], tuple[float, ...]]] = []
-            if result.boxes is not None and result.boxes.id is not None:
-                for box in result.boxes:
-                    if box.id is None:
-                        continue
-                    track_id = int(box.id.item())
-                    xyxy = tuple(float(v) for v in box.xyxy[0].tolist())
-                    anchor = bottom_center(*xyxy)
-                    detections.append(TrackedPoint(track_id=track_id, anchor=anchor))
-                    visible_objects.append((track_id, anchor, xyxy))
-
-            # The ONLY place that decides whether a new event happened.
-            events = engine.process_frame(
-                frame_index=frame_index,
-                detections=detections,
-                lines=lines,
-                zones=zones,
+            sequence += 1
+            packet = FramePacket(
+                sequence=sequence,
+                session_id=1,
+                captured_at=timeline_start + timedelta(seconds=(sequence - 1) / source_fps),
+                frame=frame,
             )
+            annotated = worker.process_packet(packet)
+            writer.write(annotated.annotated)
 
-            draw_regions(annotated, lines, zones)
-            inside_tracks: set[int] = set()
-            for track_id, anchor, (x1, y1, x2, y2) in visible_objects:
-                cv2.circle(
-                    annotated,
-                    (round(anchor[0]), round(anchor[1])),
-                    4,
-                    (255, 90, 0),
-                    -1,
-                    cv2.LINE_AA,
-                )
-                if any(point_in_polygon(anchor, z.points) for z in zones):
-                    inside_tracks.add(track_id)
-                    cv2.rectangle(
-                        annotated,
-                        (round(x1), round(y1)),
-                        (round(x2), round(y2)),
-                        (0, 0, 255),
-                        3,
-                        cv2.LINE_AA,
-                    )
-
-            # Draw the updated counts on snapshots from this frame.
-            next_counts = counts.copy()
-            for event in events:
-                if event.event_type == EventType.LINE_CROSSING:
-                    assert event.direction is not None
-                    next_counts[event.direction] += 1
-            draw_hud(
-                annotated,
-                camera.id,
-                next_counts,
-                len(inside_tracks),
-                fps=frame_index / max(time.perf_counter() - started, 1e-6),
-            )
-
-            for event in events:
-                recorded = recorder.record(event, annotated)
-                logger.info(
-                    "SAVED event=%s camera=%s track=%s type=%s region=%s direction=%s snapshot=%s",
-                    recorded.event_id,
-                    recorded.camera_id,
-                    recorded.track_id,
-                    recorded.event_type.value,
-                    recorded.region_id,
-                    recorded.direction,
-                    recorded.snapshot_path,
-                )
-            counts = next_counts
-
-            if writer is None:
-                writer = cv2.VideoWriter(
-                    str(output_path),
-                    cv2.VideoWriter.fourcc(*"mp4v"),
-                    fps,
-                    (width, height),
-                )
-                if not writer.isOpened():
-                    raise RuntimeError(f"Failed to open video output: {output_path}")
-            writer.write(annotated)
-            if frame_index % 100 == 0:
-                logger.info(
-                    "Processed %s frames | IN=%s OUT=%s",
-                    frame_index,
-                    counts["IN"],
-                    counts["OUT"],
-                )
-            if args.max_frames and frame_index >= args.max_frames:
-                break
+        if writer.frames_written == 0:
+            raise RuntimeError("No frames processed from input MP4")
+        status = worker.status()
+        logger.info(
+            "Offline MP4: read=%d written=%d skipped=%d input_fps=%.3f output_fps=%.3f "
+            "events=%d -> %s",
+            sequence,
+            writer.frames_written,
+            status.skipped_capture_frames,
+            source_fps,
+            writer.fps,
+            status.saved_events,
+            output_path,
+        )
+        return writer.frames_written
     finally:
         cap.release()
         if writer is not None:
-            writer.release()
+            writer.close()
 
-    if frame_index == 0:
-        raise RuntimeError("No video frames were processed")
-    elapsed = time.perf_counter() - started
-    logger.info(
-        "Done: camera=%s frames=%s processing_FPS=%.2f IN=%s OUT=%s video=%s database=%s",
-        camera.id,
-        frame_index,
-        frame_index / elapsed if elapsed else 0.0,
-        counts["IN"],
-        counts["OUT"],
-        output_path,
-        storage.db_path,
+
+def run_live(
+    *,
+    source: str | int,
+    camera: Any,
+    model_config: Any,
+    recorder: Any,
+    output_path: Path,
+    max_frames: int,
+    output_fps: float | None,
+) -> int:
+    """RTSP/webcam: latest-frame semantics, as required by F02."""
+    capture = CameraWorker(camera.id, source, is_file=False)
+    worker = AIWorker(camera=camera, model_config=model_config, source=capture, recorder=recorder)
+    writer = _MP4Writer(output_path, output_fps or 15.0)
+    last_sequence = 0
+    try:
+        capture.start()
+        worker.start()
+        while max_frames == 0 or writer.frames_written < max_frames:
+            packet = worker.wait_for_frame(after_sequence=last_sequence, timeout=0.5)
+            if packet is not None:
+                last_sequence = packet.sequence
+                writer.write(packet.annotated)
+                continue
+            if worker.status().state in (AIState.ERROR, AIState.ENDED, AIState.STOPPED):
+                break
+
+        ai_status = worker.status()
+        capture_status = capture.status()
+        logger.info("AI status: %s", ai_status)
+        logger.info("Capture status: %s", capture_status)
+        if ai_status.state == AIState.ERROR or capture_status.state == CameraState.ERROR:
+            raise RuntimeError(f"Camera {camera.id} failed; check logged error")
+        if writer.frames_written == 0:
+            raise RuntimeError("No processed frames were available")
+        return writer.frames_written
+    finally:
+        worker.stop(timeout=10.0)
+        capture.stop(timeout=10.0)
+        writer.close()
+
+
+def run_demo(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    camera = next((item for item in config.cameras if item.id == args.camera), None)
+    if camera is None:
+        raise ValueError(f"Unknown camera ID: {args.camera}")
+    source, is_file = resolve_source(camera, args.input)
+    output_path = Path(args.output)
+    if is_file:
+        source = str(Path(source).expanduser().resolve())
+        if not Path(source).is_file():
+            raise FileNotFoundError(f"Input video not found: {source}")
+        if Path(source) == output_path.resolve():
+            raise ValueError("Input and output video cannot be the same file")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    store = SQLiteEventStore(args.db)
+    recorder = EventRecorder(store, SnapshotWriter(Path(args.snapshots)))
+    run = run_file if is_file else run_live
+    written = run(
+        source=source,
+        camera=camera,
+        model_config=config.model_for(camera),
+        recorder=recorder,
+        output_path=output_path,
+        max_frames=args.max_frames,
+        output_fps=getattr(args, "output_fps", None),
     )
+    logger.info("Saved %d annotated frames to %s", written, output_path)
+    return written
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="YOLO/ByteTrack demo + SQLite events")
-    parser.add_argument("--config", default="config/cameras.yaml")
+def main(
+    *,
+    default_config: str = "config/cameras.yaml",
+    default_output: str = "artifacts/events_demo.mp4",
+    default_max_frames: int = 0,
+) -> None:
+    parser = argparse.ArgumentParser(description="Capture + AI worker demo with SQLite events")
+    parser.add_argument("--config", default=default_config)
     parser.add_argument("--camera", default="cam1")
-    parser.add_argument("--input", help="Override YAML with a file or RTSP URL")
-    parser.add_argument("--output", default="artifacts/events_demo.mp4")
+    parser.add_argument("--input", help="MP4/RTSP override for one camera")
+    parser.add_argument("--output", default=default_output)
     parser.add_argument("--db", default="storage/events.db")
     parser.add_argument("--snapshots", default="storage/snapshots")
-    parser.add_argument("--max-frames", type=int, default=0)
+    parser.add_argument(
+        "--output-fps",
+        type=float,
+        default=None,
+        help="Override output FPS. Default: source FPS for MP4; 15 for live sources.",
+    )
+    parser.add_argument(
+        "--max-frames", type=int, default=default_max_frames, help="0 means unlimited"
+    )
     args = parser.parse_args()
-    if args.max_frames < 0:
-        parser.error("--max-frames must be >= 0")
+    if args.max_frames < 0 or (
+        args.output_fps is not None and (not math.isfinite(args.output_fps) or args.output_fps <= 0)
+    ):
+        parser.error("--max-frames must be >= 0 and --output-fps must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
     run_demo(args)
 
 

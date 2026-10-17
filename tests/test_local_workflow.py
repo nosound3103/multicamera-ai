@@ -72,10 +72,14 @@ def test_real_repository_video_to_eof():
         assert worker.stop()
 
 
-def test_demo_cli_keeps_existing_options():
+@pytest.mark.parametrize(
+    "entrypoint",
+    [["-m", "multicamera_ai.vision.demo"], ["scripts/ai_worker_demo.py"]],
+)
+def test_demo_cli_keeps_existing_options(entrypoint):
     pytest.importorskip("cv2")
     result = subprocess.run(
-        [sys.executable, "-m", "multicamera_ai.vision.demo", "--help"],
+        [sys.executable, *entrypoint, "--help"],
         cwd=ROOT,
         capture_output=True,
         text=True,

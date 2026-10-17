@@ -240,7 +240,7 @@ class AIWorker:
         Must only be called by one processing thread at a time. The consumer
         uses capture sequence gaps to report how many frames it skipped.
         """
-        from multicamera_ai.vision.demo import draw_hud, draw_regions, project_regions
+        from multicamera_ai.vision.overlay import draw_hud, draw_regions, project_regions
 
         if self._last_sequence is not None and packet.sequence <= self._last_sequence:
             raise ValueError("Capture sequence must strictly increase")
@@ -362,6 +362,7 @@ class AIWorker:
             event_count=len(events),
         )
         with self._condition:
+            self._state = AIState.RUNNING
             self._processed_frames += 1
             self._capture_to_ai_ms = (datetime.now(UTC) - packet.captured_at).total_seconds() * 1000
             self._inference_ms = inference_ms
@@ -381,9 +382,6 @@ class AIWorker:
                 if packet is not None:
                     last_sequence = packet.sequence
                     self.process_packet(packet)
-                    with self._condition:
-                        self._state = AIState.RUNNING
-                        self._condition.notify_all()
                     continue
 
                 state = self.source.status().state
