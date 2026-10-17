@@ -45,7 +45,7 @@ def replay_watermarked(args):
                 f"replay_{camera_id}",
                 f"{args.server}/input_{camera_id}",
                 Adapter(capture),
-                StreamingConfig(watermark=True, fps=25),
+                StreamingConfig(watermark=True),
             )
             publishers.append(publisher)
             publisher.start()

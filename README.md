@@ -110,3 +110,9 @@ latency includes watermarked source replay through output decoding.
 Processes are selected for this machine: better throughput and camera isolation.
 The four-camera FPS target is not met by this baseline. Inputs are software
 replayed on the same machine; their CPU cost is included in available capacity.
+
+After bounding each file decoder to one thread and replaying at the 15 FPS
+streaming default, four process pipelines measured 11.36 / 11.77 / 11.37 / 10.98
+unique output FPS, with per-camera maximum end-to-end latency 608 / 620 / 711 /
+659 ms (60 s). All four passed the throughput/latency target for this run and
+shut down cleanly. Detection weights and imgsz remained unchanged.

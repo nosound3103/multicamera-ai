@@ -88,6 +88,8 @@ def opencv_capture_factory(source: str | int) -> Capture:
                 1,
             ],
         )
+    if isinstance(source, str):
+        return cv2.VideoCapture(source, cv2.CAP_FFMPEG, [cv2.CAP_PROP_N_THREADS, 1])
     return cv2.VideoCapture(source)
 
 
