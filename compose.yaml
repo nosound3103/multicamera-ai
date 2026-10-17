@@ -50,6 +50,8 @@ services:
     stop_signal: SIGINT
 
   benchmark:
+    mem_limit: ${BENCHMARK_MEMORY_LIMIT:-7g}
+    memswap_limit: ${BENCHMARK_MEMORY_SWAP_LIMIT:-8g}
     image: multi-camera-ai:cpu
     profiles: [benchmark]
     init: true
@@ -69,6 +71,6 @@ services:
         read_only: true
         bind:
           create_host_path: false
-    command: ["--config", "config/cameras.docker.yaml", "--counts", "1", "2", "3", "4", "--modes", "processes", "--source-watermark", "--server", "rtsp://mediamtx:8554", "--output", "artifacts/docker-benchmark/results.json"]
+    command: ["--config", "config/cameras.docker.yaml", "--counts", "1", "4", "8", "--modes", "threads", "processes", "--source-watermark", "--server", "rtsp://mediamtx:8554", "--output", "artifacts/docker-benchmark/results.json"]
     stop_grace_period: 60s
     stop_signal: SIGINT

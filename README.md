@@ -44,7 +44,7 @@ container recreation. `docker compose down` sends SIGTERM to the API and allows
 60 seconds for pipeline cleanup. The replay and benchmark tools receive SIGINT
 so their cleanup blocks run too.
 
-### Benchmark 1â€“4 cameras
+### Benchmark 1, 4 and 8 cameras
 
 Stop `ai` before benchmarking to avoid running two sets of inference workers.
 Start the replay sources and run the benchmark container on the same network:
@@ -56,8 +56,12 @@ docker compose -f compose.yaml -f compose.gpu.yaml --profile benchmark run --rm 
 docker compose -f compose.yaml -f compose.gpu.yaml --profile demo down
 ```
 
-The default benchmark measures 1, 2, 3 and 4 process pipelines for 60 seconds
-each after 15 seconds of warmup, with capture timestamps carried through RTSP.
+The default benchmark compares threads and processes with 1, 4 and 8 pipelines
+for 60 seconds each after 15 seconds of warmup. Startup allows up to 180 seconds.
+Cameras 5-8 reuse sources/regions/models from 1-4 with separate trackers and
+outputs; no additional videos or replay encoders are required. Capture timestamps
+are carried through RTSP. Invalid runs (worker loss or failed cleanup) return a
+nonzero exit code; a valid run can still fail the FPS/latency target.
 Results are written to ignored `artifacts/docker-benchmark/results.json`.
 Both replay and measurement consume resources on the test machine. A successful
 command exit alone does not mean the performance target was met: inspect FPS,
@@ -84,7 +88,7 @@ in the camera panel. Import the corresponding
 Labelme `counting_line` and `restricted_area` into an existing camera with:
 
 ```sh
-python scripts/labelme_to_yaml.py assets/cam_3/cam_3.json --config config/cameras.local.yaml --camera cam3
+python scripts/labelme_to_yaml.py assets/cam_1/cam_1.json --config config/cameras.local.yaml --camera cam1
 ```
 
 The replay service reads enabled file sources from `cameras.local.yaml` and
@@ -95,24 +99,39 @@ selecting a profile does not implement shared or batched inference.
 
 ### Measured thread/process comparison
 
-Tested 2026-10-17 on an i5-11400H, 16 GB RAM, RTX 3050 Laptop 4 GB,
-Docker Desktop WSL2 (8 logical CPUs / 7.65 GiB). CUDA, vehicle model, imgsz 320,
-15 s warmup and 60 s measurement per run. FPS counts unique decoded RTSP frames;
-latency includes watermarked source replay through output decoding.
+Tested 2026-10-17: i5-11400H, 16 GB RAM, RTX 3050 Laptop 4 GB;
+Docker Desktop WSL2 with 8 logical CPUs / 7.65 GiB. CUDA, vehicle model,
+imgsz 320, 15 FPS replay, 15 s warmup, 60 s measurement per run.
+FPS counts unique decoded RTSP frames; latency is source replay capture to
+output decode, excluding player rendering/cache. Replay shares the test machine.
 
-| Cameras | Execution | FPS per camera | Worst latency |
-| --- | --- | --- | --- |
-| 1 | threads | 8.09 | 771 ms |
-| 1 | processes | 10.12 | 924 ms |
-| 4 | threads | 1.04-1.58 | 3921 ms |
-| 4 | processes | 7.86-8.87 | 896 ms |
+| Cameras | Execution | FPS per camera | Worst latency | Result |
+| --- | --- | --- | --- | --- |
+| 1 | threads | 14.92 | 395 ms | Pass |
+| 1 | processes | 14.96 | 338 ms | Pass |
+| 4 | threads | 5.28-6.16 | 931 ms | FPS below target |
+| 4 | processes | 10.87-11.99 | 681 ms | Pass |
+| 8 | threads | 1.78-2.08 | 3807 ms | Below target |
+| 8 | processes | Invalid | Not comparable | 2 workers OOM-killed |
 
-Processes are selected for this machine: better throughput and camera isolation.
-The four-camera FPS target is not met by this baseline. Inputs are software
-replayed on the same machine; their CPU cost is included in available capacity.
+Processes are selected for four cameras: about twice the decoded throughput
+of threads with clean shutdown. A previous 25 FPS replay baseline achieved only
+7.86-8.87 FPS with four processes. Bounding file decoding to one thread, using
+15 FPS replay and limiting BLAS/OpenMP threads improved throughput without
+changing detection weights or imgsz. A separate tuned four-camera run also
+passed at 10.98-11.77 FPS, maximum latency 711 ms. These are 60 s measurements,
+not a long-duration reliability claim.
 
-After bounding each file decoder to one thread and replaying at the 15 FPS
-streaming default, four process pipelines measured 11.36 / 11.77 / 11.37 / 10.98
-unique output FPS, with per-camera maximum end-to-end latency 608 / 620 / 711 /
-659 ms (60 s). All four passed the throughput/latency target for this run and
-shut down cleanly. Detection weights and imgsz remained unchanged.
+Benchmark containers default to 7 GiB RAM and 8 GiB total RAM+swap, configurable
+with BENCHMARK_MEMORY_LIMIT and BENCHMARK_MEMORY_SWAP_LIMIT. Eight processes did
+not fit that budget: the surviving workers' FPS does not represent eight-camera
+capacity. Remaining workers cleaned up after OOM; killed workers were reported
+as unclean. Supporting eight process pipelines needs lower per-worker memory or
+more memory capacity; it is not currently verified on this laptop.
+
+SIGINT (the Ctrl+C signal) was tested with four real CUDA/RTSP pipelines in both
+execution modes: all camera components stopped cleanly and containers exited 0.
+Abrupt worker kill has a regression test; a lock-free stop flag prevents a killed
+worker from blocking shutdown through an abandoned IPC event lock. A 15 s loss
+of only input_cam1 triggered reconnect/session reset while cameras 2-4 continued
+producing frames. Webcam verification was excluded at the owner's request.

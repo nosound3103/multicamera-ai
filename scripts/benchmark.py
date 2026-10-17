@@ -50,14 +50,14 @@ def probe(url, stop, samples, ready, connected):
             capture.release()
 
 
-def run(config, count, mode, args):
+def prepare_config(config, count, mode, args):
     config = config.model_copy(deep=True)
     template = config.cameras[0]
     config.cameras = [
         config.cameras[i % len(config.cameras)].model_copy(deep=True) for i in range(count)
     ]
     for i, camera in enumerate(config.cameras, 1):
-        camera.id = f"bench{i}"
+        camera.id = f"cam{i}"
         camera.enabled = True
         camera.source.timestamp_watermark = args.source_watermark
         camera.output_url = f"{args.server}/bench{i}"
@@ -74,6 +74,11 @@ def run(config, count, mode, args):
     config.streaming.enabled = True
     config.streaming.watermark = True
     config.runtime.database = str(Path(args.output).parent / f"events-{mode}-{count}.db")
+    return config
+
+
+def run(config, count, mode, args):
+    config = prepare_config(config, count, mode, args)
     service = PipelineService(config)
     stop, ready = threading.Event(), threading.Event()
     samples = {c.id: [] for c in config.cameras}
@@ -149,6 +154,12 @@ def run(config, count, mode, args):
             resources[-1]["at"] - resources[0]["at"]
         )
     return {
+        "valid": (
+            all(event.is_set() for event in connected.values())
+            and all(v.get("worker_alive") for v in status.values())
+            and all(clean.values())
+            and all(not t.is_alive() for t in threads)
+        ),
         "execution": mode,
         "camera_count": count,
         "seconds": args.seconds,
@@ -232,7 +243,8 @@ def main():
             logging.info("Benchmark count=%d mode=%s", count, mode)
             result["runs"].append(run(config, count, mode, args))
             path.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+    return 0 if all(run["valid"] for run in result["runs"]) else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

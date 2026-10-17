@@ -11,4 +11,4 @@ services:
   benchmark:
     image: multi-camera-ai:cu128
     gpus: all
-    command: ["--config", "config/cameras.docker.gpu.yaml", "--counts", "1", "2", "3", "4", "--modes", "processes", "--source-watermark", "--server", "rtsp://mediamtx:8554", "--output", "artifacts/docker-benchmark/results.json"]
+    command: ["--config", "config/cameras.docker.gpu.yaml", "--counts", "1", "4", "8", "--modes", "threads", "processes", "--source-watermark", "--server", "rtsp://mediamtx:8554", "--output", "artifacts/docker-benchmark/results.json"]
