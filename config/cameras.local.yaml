@@ -31,15 +31,6 @@ cameras:
     type: file
     uri: ../assets/cam_2.mp4
   output_url: rtsp://mediamtx:8554/output_cam2
-  lines: []
-  zones: []
-  model: person
-- id: cam3
-  enabled: true
-  source:
-    type: file
-    uri: ../assets/cam_3.mp4
-  output_url: rtsp://mediamtx:8554/output_cam3
   lines:
   - id: counting_line
     start:
@@ -60,12 +51,12 @@ cameras:
     - x: 0.04235593
       y: 0.98364964
   model: vehicle
-- id: cam4
+- id: cam3
   enabled: true
   source:
     type: file
-    uri: ../assets/cam_4.mp4
-  output_url: rtsp://mediamtx:8554/output_cam4
+    uri: ../assets/cam_3.mp4
+  output_url: rtsp://mediamtx:8554/output_cam3
   lines:
   - id: counting_line
     start:
@@ -86,12 +77,12 @@ cameras:
     - x: 0.02243601
       y: 1.0
   model: vehicle
-- id: cam5
+- id: cam4
   enabled: true
   source:
     type: file
-    uri: ../assets/cam_5.mp4
-  output_url: rtsp://mediamtx:8554/output_cam5
+    uri: ../assets/cam_4.mp4
+  output_url: rtsp://mediamtx:8554/output_cam4
   lines:
   - id: counting_line
     start:

@@ -139,11 +139,25 @@ def test_missing_yaml_file(tmp_path):
         load_config(tmp_path / "missing.yaml")
 
 
-def test_example_has_five_cameras():
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "cameras.yaml",
+        "cameras.local.yaml",
+        "cameras.cpu.yaml",
+        "cameras.gpu.yaml",
+        "cameras.docker.yaml",
+        "cameras.docker.gpu.yaml",
+    ],
+)
+def test_example_has_four_cameras(filename):
     root = Path(__file__).resolve().parents[1]
-    config = load_config(root / "config" / "cameras.yaml")
+    config = load_config(root / "config" / filename)
 
-    assert len(config.cameras) == 5
+    assert len(config.cameras) == 4
+    assert [camera.id for camera in config.cameras] == ["cam1", "cam2", "cam3", "cam4"]
+    assert all(camera.model == "vehicle" for camera in config.cameras)
+    assert all(camera.lines and camera.zones for camera in config.cameras)
 
 
 def test_local_configuration_preserves_deployment_settings(monkeypatch, tmp_path):

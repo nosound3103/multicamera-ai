@@ -9,17 +9,17 @@ uses CPU PyTorch; the GPU override uses PyTorch 2.10.0 with CUDA 12.8. On Window
 GPU containers require Docker Desktop's WSL 2 backend and an NVIDIA driver with
 WSL support.
 
-Place `yolo26n.pt` and `yolo11-newdata.pt` in `models/`, and the five input
-videos at `assets/cam_1.mp4` through `assets/cam_5.mp4`. Weights, videos, logs, snapshots,
+Place `yolo26n.pt` and `yolo11-newdata.pt` in `models/`, and the four input
+videos at `assets/cam_1.mp4` through `assets/cam_4.mp4`. Weights, videos, logs, snapshots,
 databases and benchmark measurements are kept outside the image.
 
 ```sh
-# CPU demo (five distinct replay sources)
+# CPU demo (four distinct replay sources)
 docker compose build ai
 docker compose --profile demo up -d
 
 # API status: http://localhost:8000/cameras
-# RTSP outputs: rtsp://localhost:8554/output_cam1 through output_cam5
+# RTSP outputs: rtsp://localhost:8554/output_cam1 through output_cam4
 docker compose logs -f ai
 docker compose down
 ```
