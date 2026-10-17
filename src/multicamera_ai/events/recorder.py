@@ -30,7 +30,7 @@ class EventRecorder:
 
 
 class AsyncEventRecorder:
-    """Bounded disk writer. Overflow/failures are visible; inference never waits on disk."""
+    """Bounded disk writer; apply backpressure instead of discarding events."""
 
     def __init__(self, recorder: EventRecorder, capacity: int = 8) -> None:
         import queue
@@ -47,17 +47,18 @@ class AsyncEventRecorder:
         self._thread.start()
 
     def record(self, event: Event, annotated_frame: Any) -> bool:
-        import logging
         import queue
 
-        try:
-            self._queue.put_nowait((event, annotated_frame.copy()))
-            return True
-        except queue.Full:
-            with self._lock:
-                self.dropped += 1
-            logging.getLogger(__name__).error("Event queue full camera=%s", event.camera_id)
-            return False
+        item = (event, annotated_frame.copy())
+        while not self._stop.is_set():
+            try:
+                self._queue.put(item, timeout=0.1)
+                return True
+            except queue.Full:
+                continue
+        with self._lock:
+            self.dropped += 1
+        return False
 
     def status(self) -> dict:
         with self._lock:
@@ -74,8 +75,21 @@ class AsyncEventRecorder:
         return not self._thread.is_alive()
 
     def _run(self) -> None:
+        from contextlib import nullcontext
+
+        context = (
+            self.recorder.storage.writer()
+            if isinstance(self.recorder, EventRecorder)
+            else nullcontext()
+        )
+        with context:
+            self._drain()
+
+    def _drain(self) -> None:
         import logging
         import queue
+        import sqlite3
+        import time
 
         while not self._stop.is_set() or not self._queue.empty():
             try:
@@ -83,16 +97,28 @@ class AsyncEventRecorder:
             except queue.Empty:
                 continue
             try:
-                self.recorder.record(event, frame)
+                for attempt in range(4):
+                    try:
+                        self.recorder.record(event, frame)
+                        break
+                    except sqlite3.OperationalError as exc:
+                        if (
+                            getattr(exc, "sqlite_errorcode", 0) & 0xFF
+                            not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+                            or attempt == 3
+                        ):
+                            raise
+                        time.sleep(0.05 * (attempt + 1))
                 with self._lock:
                     self.saved += 1
             except Exception as exc:
                 with self._lock:
                     self.failed += 1
                 logging.getLogger(__name__).error(
-                    "Event persistence failed camera=%s error=%s",
+                    "Event persistence failed camera=%s error=%s detail=%s",
                     event.camera_id,
                     type(exc).__name__,
+                    exc,
                 )
             finally:
                 self._queue.task_done()

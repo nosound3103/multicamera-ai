@@ -1,7 +1,8 @@
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import local
 
 from multicamera_ai.events.models import RecordedEvent
 
@@ -18,6 +19,7 @@ class SQLiteEventStore:
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
+        self._writer = local()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as connection:
             connection.execute("PRAGMA journal_mode=WAL")
@@ -54,9 +56,24 @@ class SQLiteEventStore:
         connection.row_factory = sqlite3.Row
         return connection
 
+    @contextmanager
+    def writer(self):
+        """Reuse a connection on the disk writer thread, avoiding per-event checkpoints."""
+        with closing(self._connect()) as connection:
+            self._writer.connection = connection
+            try:
+                yield
+            finally:
+                del self._writer.connection
+
     def insert(self, event: RecordedEvent) -> None:
         """Insert one event transactionally; duplicate event_id raises IntegrityError."""
-        with closing(self._connect()) as connection:
+        existing = getattr(self._writer, "connection", None)
+        with (
+            nullcontext(existing)
+            if existing is not None
+            else closing(self._connect()) as connection
+        ):
             with connection:
                 connection.execute(
                     """
