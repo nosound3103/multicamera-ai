@@ -1,4 +1,4 @@
-name: multi-camera-ai
+name: multi-camera
 services:
   mediamtx:
     image: bluenviron/mediamtx:1.21.2

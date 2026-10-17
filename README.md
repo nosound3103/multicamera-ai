@@ -9,6 +9,9 @@ uses CPU PyTorch; the GPU override uses PyTorch 2.10.0 with CUDA 12.8. On Window
 GPU containers require Docker Desktop's WSL 2 backend and an NVIDIA driver with
 WSL support.
 
+The Compose project is `multi-camera`, producing `multi-camera-ai-1`,
+`multi-camera-mediamtx-1` and `multi-camera-replay-1` for the demo services.
+
 Place `yolo26n.pt` and `yolo11-newdata.pt` in `models/`, and the four input
 videos at `assets/cam_1.mp4` through `assets/cam_4.mp4`. Weights, videos, logs, snapshots,
 databases and benchmark measurements are kept outside the image.
