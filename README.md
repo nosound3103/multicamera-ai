@@ -92,3 +92,21 @@ publishes each as `input_<camera-id>`. Keep matching camera IDs in Docker's RTSP
 config. Use `--count 4` to replay only the first four cameras for a 1-4 camera test.
 Each camera owns its model instance and tracker even when sharing a profile;
 selecting a profile does not implement shared or batched inference.
+
+### Measured thread/process comparison
+
+Tested 2026-10-17 on an i5-11400H, 16 GB RAM, RTX 3050 Laptop 4 GB,
+Docker Desktop WSL2 (8 logical CPUs / 7.65 GiB). CUDA, vehicle model, imgsz 320,
+15 s warmup and 60 s measurement per run. FPS counts unique decoded RTSP frames;
+latency includes watermarked source replay through output decoding.
+
+| Cameras | Execution | FPS per camera | Worst latency |
+| --- | --- | --- | --- |
+| 1 | threads | 8.09 | 771 ms |
+| 1 | processes | 10.12 | 924 ms |
+| 4 | threads | 1.04-1.58 | 3921 ms |
+| 4 | processes | 7.86-8.87 | 896 ms |
+
+Processes are selected for this machine: better throughput and camera isolation.
+The four-camera FPS target is not met by this baseline. Inputs are software
+replayed on the same machine; their CPU cost is included in available capacity.

@@ -92,7 +92,7 @@ def run(config, count, mode, args):
     try:
         for thread in threads:
             thread.start()
-        startup_deadline = time.monotonic() + 30
+        startup_deadline = time.monotonic() + args.startup_timeout
         while time.monotonic() < startup_deadline:
             statuses = service.status()
             if all(event.is_set() for event in connected.values()):
@@ -104,7 +104,7 @@ def run(config, count, mode, args):
                 break
             time.sleep(0.2)
         else:
-            logging.error("Not all camera outputs ready after 30s; recording degraded run")
+            logging.error("Not all camera outputs ready after %ss", args.startup_timeout)
         time.sleep(args.warmup)
         started = time.monotonic()
         ready.set()
@@ -154,6 +154,7 @@ def run(config, count, mode, args):
         "seconds": args.seconds,
         "measured_seconds": elapsed,
         "warmup_seconds": args.warmup,
+        "all_outputs_ready": all(event.is_set() for event in connected.values()),
         "cameras": cameras,
         "status": status,
         "shutdown": clean,
@@ -173,6 +174,7 @@ def main():
     )
     parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--warmup", type=int, default=15)
+    parser.add_argument("--startup-timeout", type=int, default=180)
     parser.add_argument(
         "--source-watermark",
         action="store_true",
@@ -182,7 +184,7 @@ def main():
     parser.add_argument("--server", default="rtsp://127.0.0.1:8554")
     parser.add_argument("--output", default="artifacts/benchmark/results.json")
     args = parser.parse_args()
-    if min(args.counts) < 1 or args.seconds < 1 or args.warmup < 0:
+    if min(args.counts) < 1 or args.seconds < 1 or args.warmup < 0 or args.startup_timeout < 1:
         parser.error("Counts/seconds must be positive and warmup nonnegative")
     config = load_config(args.config)
     import torch
