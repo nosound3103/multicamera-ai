@@ -42,3 +42,8 @@ artifacts/
 
 # Generated measurements stay local; scripts default to artifacts/.
 benchmarks/
+
+# Other
+notebooks/
+report/
+scripts/
