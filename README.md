@@ -61,6 +61,12 @@ docker compose -f compose.yaml -f compose.gpu.yaml --profile demo down
 
 The default benchmark compares threads and processes with 1, 4 and 8 pipelines
 for 60 seconds each after 15 seconds of warmup. Startup allows up to 180 seconds.
+Each output probe waits for AI/publisher progress and quietly checks that its
+RTSP path exists before opening OpenCV. Warmup begins only after every probe
+has decoded a timestamped frame; measurement begins after warmup and a final
+readiness check. Startup timeout or worker failure skips measurement and records
+an invalid run with `failure_reason`, `measurement_started: false` and zero
+`measured_seconds`. JSON reports startup and actual warmup durations separately.
 Cameras 5-8 reuse sources/regions/models from 1-4 with separate trackers and
 outputs; no additional videos or replay encoders are required. Capture timestamps
 are carried through RTSP. Invalid runs (worker loss or failed cleanup) return a

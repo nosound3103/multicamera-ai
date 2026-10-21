@@ -6,15 +6,19 @@ starts at replay capture; otherwise it starts AFTER the pipeline's OpenCV read.
 """
 
 import argparse
+import base64
 import hashlib
 import importlib.metadata
 import json
 import logging
 import platform
+import socket
+import ssl
 import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import numpy as np
 import psutil
@@ -25,9 +29,86 @@ from multicamera_ai.service import PipelineService, configure_logging
 from multicamera_ai.telemetry import read_stamp
 
 
+def rtsp_output_available(url, timeout=0.5):
+    """Quiet DESCRIBE preflight: do not open noisy OpenCV probes on missing paths."""
+    parsed = urlsplit(url)
+    address = parsed.netloc.rsplit("@", 1)[-1]
+    target = parsed._replace(netloc=address).geturl()
+    headers = [f"DESCRIBE {target} RTSP/1.0", "CSeq: 1", "Accept: application/sdp"]
+    if parsed.username is not None:
+        credentials = f"{unquote(parsed.username)}:{unquote(parsed.password or '')}"
+        headers.append("Authorization: Basic " + base64.b64encode(credentials.encode()).decode())
+    try:
+        with socket.create_connection((parsed.hostname, parsed.port or 554), timeout) as connection:
+            if parsed.scheme == "rtsps":
+                connection = ssl.create_default_context().wrap_socket(
+                    connection, server_hostname=parsed.hostname
+                )
+            try:
+                connection.sendall(("\r\n".join(headers) + "\r\n\r\n").encode())
+                response = b""
+                while b"\r\n" not in response and len(response) < 4096:
+                    part = connection.recv(4096)
+                    if not part:
+                        return False
+                    response += part
+                status = response.split(b"\r\n", 1)[0].split()
+                # Let OpenCV negotiate servers requiring Digest authentication.
+                return len(status) >= 2 and status[1] in (b"200", b"401")
+            finally:
+                if parsed.scheme == "rtsps":
+                    connection.close()
+    except (OSError, ValueError):
+        return False
+
+
+def camera_failed(status):
+    return (
+        not status.get("worker_alive", False)
+        or bool(status.get("error"))
+        or status.get("ai", {}).get("state") in {"error", "ended", "stopped"}
+        or status.get("capture", {}).get("state") in {"error", "ended", "stopped"}
+    )
+
+
+def publisher_ready(status):
+    return (
+        not camera_failed(status)
+        and status.get("status_age_seconds", float("inf")) < 3
+        and status.get("capture", {}).get("state") == "running"
+        and status.get("ai", {}).get("state") == "running"
+        and not status.get("ai", {}).get("last_error")
+        and not (status.get("output") or {}).get("last_error")
+        and status.get("ai", {}).get("processed_frames", 0) > 0
+        and (status.get("output") or {}).get("frames", 0) > 0
+        and (status.get("output") or {}).get("ffmpeg_pid") is not None
+    )
+
+
+def wait_for_outputs(service, threads, connected, timeout):
+    """Start each probe only after its AI/publisher reports progress."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        statuses = service.status()
+        for camera_id, thread in threads.items():
+            status = statuses.get(camera_id, {})
+            if camera_failed(status):
+                return False, "camera_failed_during_startup"
+            if thread.ident is None and publisher_ready(status):
+                logging.info("Publisher ready camera=%s; waiting for RTSP decode", camera_id)
+                thread.start()
+        if all(event.is_set() for event in connected.values()):
+            return True, None
+        time.sleep(0.2)
+    return False, "startup_timeout"
+
+
 def probe(url, stop, samples, ready, connected):
     last = None
     while not stop.is_set():
+        if not rtsp_output_available(url):
+            stop.wait(0.5)
+            continue
         capture = opencv_capture_factory(url)
         try:
             if not capture.isOpened():
@@ -113,63 +194,79 @@ def run(config, count, mode, args):
     stop, ready = threading.Event(), threading.Event()
     samples = {c.id: [] for c in config.cameras}
     connected = {c.id: threading.Event() for c in config.cameras}
-    threads = [
-        threading.Thread(
+    threads = {
+        c.id: threading.Thread(
             target=probe,
             args=(c.output_url, stop, samples[c.id], ready, connected[c.id]),
             daemon=True,
         )
         for c in config.cameras
-    ]
+    }
     resources = []
     parent = psutil.Process()
+    started = ended = time.monotonic()
+    startup_started = started
+    startup_seconds = warmup_seconds = 0.0
+    before = {}
+    failure_reason = None
+    measurement_started = False
+    status = {}
     service.start()
     try:
-        for thread in threads:
-            thread.start()
-        startup_deadline = time.monotonic() + args.startup_timeout
-        while time.monotonic() < startup_deadline:
-            statuses = service.status()
-            if all(event.is_set() for event in connected.values()):
-                break
-            if any(
-                v.get("ai", {}).get("state") == "error" or v.get("error") for v in statuses.values()
-            ):
-                logging.error("Camera failed during benchmark startup; recording failed run")
-                break
-            time.sleep(0.2)
+        logging.info("Waiting up to %ss for AI, publishers and RTSP probes", args.startup_timeout)
+        outputs_ready, failure_reason = wait_for_outputs(
+            service, threads, connected, args.startup_timeout
+        )
+        startup_seconds = time.monotonic() - startup_started
+        if outputs_ready:
+            logging.info("All camera outputs decoded; warming up for %ss", args.warmup)
+            warmup_started = time.monotonic()
+            while time.monotonic() - warmup_started < args.warmup:
+                status = service.status()
+                if any(camera_failed(value) for value in status.values()):
+                    failure_reason = "camera_failed_during_warmup"
+                    break
+                time.sleep(min(0.2, max(0, args.warmup - (time.monotonic() - warmup_started))))
+            warmup_seconds = time.monotonic() - warmup_started
+        if failure_reason is None:
+            before = service.status()
+            if not all(publisher_ready(before.get(c.id, {})) for c in config.cameras):
+                failure_reason = "camera_not_ready_after_warmup"
+        if failure_reason is None:
+            logging.info("All cameras ready; starting %ss measurement", args.seconds)
+            started = time.monotonic()
+            measurement_started = True
+            ready.set()
+            while time.monotonic() - started < args.seconds:
+                processes = [parent] + parent.children(recursive=True)
+                rss, cpu = 0, 0
+                for process in processes:
+                    try:
+                        rss += process.memory_info().rss
+                        cpu += sum(process.cpu_times()[:2])
+                    except psutil.NoSuchProcess:
+                        pass
+                resources.append({"at": time.monotonic(), "rss_bytes": rss, "cpu_seconds": cpu})
+                time.sleep(min(1, max(0, args.seconds - (time.monotonic() - started))))
+            ready.clear()
+            ended = time.monotonic()
         else:
-            logging.error("Not all camera outputs ready after %ss", args.startup_timeout)
-        time.sleep(args.warmup)
-        before = service.status()
-        started = time.monotonic()
-        ready.set()
-        while time.monotonic() - started < args.seconds:
-            processes = [parent] + parent.children(recursive=True)
-            rss, cpu = 0, 0
-            for process in processes:
-                try:
-                    rss += process.memory_info().rss
-                    cpu += sum(process.cpu_times()[:2])
-                except psutil.NoSuchProcess:
-                    pass
-            resources.append({"at": time.monotonic(), "rss_bytes": rss, "cpu_seconds": cpu})
-            time.sleep(1)
-        ready.clear()
-        ended = time.monotonic()
+            logging.error("Benchmark measurement skipped: %s", failure_reason)
         status = service.status()
     finally:
+        ready.clear()
         stop.set()
         clean = service.stop()
-        for thread in threads:
-            thread.join(7)
+        for thread in threads.values():
+            if thread.ident is not None:
+                thread.join(7)
     ai = ai_measurements(before, status)
     cameras = {}
     elapsed = ended - started
     for camera_id, values in samples.items():
         values = [v for v in values if started <= v[0] <= ended]
         latency = [v[1] for v in values]
-        fps = len(values) / elapsed
+        fps = len(values) / elapsed if elapsed > 0 else 0
         cameras[camera_id] = {
             **ai[camera_id],
             "decoded_unique_fps": fps,
@@ -188,12 +285,14 @@ def run(config, count, mode, args):
         )
     return {
         "valid": (
-            all(event.is_set() for event in connected.values())
+            measurement_started
+            and failure_reason is None
+            and all(event.is_set() for event in connected.values())
             and set(status) == set(samples)
             and all(v["ai_healthy"] for v in ai.values())
             and all(c["frames"] > 0 for c in cameras.values())
             and all(clean.values())
-            and all(not t.is_alive() for t in threads)
+            and all(not t.is_alive() for t in threads.values())
         ),
         "workload": "capture + YOLO tracking + events + overlay + RTSP encode/decode",
         "execution": mode,
@@ -201,6 +300,10 @@ def run(config, count, mode, args):
         "seconds": args.seconds,
         "measured_seconds": elapsed,
         "warmup_seconds": args.warmup,
+        "actual_warmup_seconds": warmup_seconds,
+        "startup_seconds": startup_seconds,
+        "measurement_started": measurement_started,
+        "failure_reason": failure_reason,
         "all_outputs_ready": all(event.is_set() for event in connected.values()),
         "cameras": cameras,
         "status": status,
@@ -208,7 +311,7 @@ def run(config, count, mode, args):
         "peak_rss_bytes": max((v["rss_bytes"] for v in resources), default=0),
         "average_cpu_cores": cpu_cores,
         "resources": resources,
-        "all_probes_stopped": all(not t.is_alive() for t in threads),
+        "all_probes_stopped": all(not t.is_alive() for t in threads.values()),
     }
 
 
