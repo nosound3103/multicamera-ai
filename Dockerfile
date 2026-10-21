@@ -8,7 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libglib2
 
 FROM base AS dependencies
 ARG TORCH_BACKEND=cpu
-ENV UV_COMPILE_BYTECODE=1
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_HTTP_TIMEOUT=300 \
+    UV_HTTP_RETRIES=8 \
+    UV_CONCURRENT_DOWNLOADS=4
+
 COPY pyproject.toml uv.lock ./
 # The lock uses CPU wheels. CUDA builds replace only the pinned PyTorch pair.
 RUN --mount=type=cache,target=/root/.cache/uv \

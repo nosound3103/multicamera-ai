@@ -99,10 +99,41 @@ python scripts/labelme_to_yaml.py assets/cam_1/cam_1.json --config config/camera
 The replay service reads enabled file sources from `cameras.local.yaml` and
 publishes each as `input_<camera-id>`. Keep matching camera IDs in Docker's RTSP
 config. Use `--count 4` to replay only the first four cameras for a 1-4 camera test.
-Watermarked replay converts at most 15 frames per second to BGR, skipping conversion
-of intervening decoded frames without accelerating file playback.
+Replay preserves the full source FPS by default. Optional `--fps 15` caps replay
+output while keeping real-time playback. A 25 FPS source still supplies at most
+25 unique frames per second; use higher-FPS sources to test faster machines.
 Each camera owns its model instance and tracker even when sharing a profile;
 selecting a profile does not implement shared or batched inference.
+
+### Uncapped FPS and AI benchmark metrics
+
+`streaming.fps: 0` (the default) removes the RTSP publisher pacing limit.
+A positive value explicitly caps output. Inference consumes the newest available
+frame without an FPS limiter; slow inference drops older capture frames to keep
+latency bounded. Encoding, source FPS and hardware still determine throughput.
+FFmpeg uses wall-clock timestamps with passthrough output; its nominal raw input
+rate is a timestamp timebase, not a Python pacing limit.
+
+The benchmark runs real YOLO inference, tracking, event handling, overlays,
+RTSP encoding and output decoding through `PipelineService`. It defaults to
+uncapped output even if the YAML sets a cap; pass `--output-fps 15` to compare
+with a capped run. JSON separates `ai_processing_fps` (inference counter delta)
+from `decoded_unique_fps` (frames received by the RTSP probe). AI counters use
+worker report timestamps, refreshed about once per second. Runs require fresh,
+healthy AI status and inference progress for every camera. Historical results
+below used different settings and are not measurements of this uncapped setup.
+
+Linux host setup uses Python 3.12, FFmpeg on PATH and the selected PyTorch build.
+For host execution, use `config/cameras.gpu.yaml` (`127.0.0.1` RTSP URLs);
+inside Compose use `config/cameras.docker.gpu.yaml` (`mediamtx` URLs).
+Native Linux GPU containers need NVIDIA Container Toolkit. Host cameras addressed
+as `host.docker.internal` need an explicit host-gateway mapping on native Linux.
+Paths and weight filenames must match case exactly. Do not copy a Windows
+`.venv` to Linux; create the environment there. GPU profiles currently use
+vehicle `imgsz: 640`; the Docker profile also uses FP16, so account for those
+settings when comparing FPS. Compose benchmark memory defaults remain 7 GiB RAM
+and 8 GiB RAM+swap; adjust `BENCHMARK_MEMORY_LIMIT` and
+`BENCHMARK_MEMORY_SWAP_LIMIT` for the target machine.
 
 ### Measured thread/process comparison
 

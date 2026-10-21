@@ -71,10 +71,40 @@ def prepare_config(config, count, mode, args):
                 }
             )
     config.runtime.execution = mode
+    config.streaming.fps = args.output_fps
     config.streaming.enabled = True
     config.streaming.watermark = True
     config.runtime.database = str(Path(args.output).parent / f"events-{mode}-{count}.db")
     return config
+
+
+def ai_measurements(before, after):
+    """Use cumulative inference counters and worker report times, excluding warmup."""
+    result = {}
+    for camera_id, end in after.items():
+        start = before.get(camera_id, {})
+        frames = end.get("ai", {}).get("processed_frames", 0) - start.get("ai", {}).get(
+            "processed_frames", 0
+        )
+        elapsed = end.get("updated_at", 0) - start.get("updated_at", 0)
+        healthy = (
+            start.get("ai", {}).get("state") == "running"
+            and start.get("status_age_seconds", float("inf")) < 3
+            and end.get("worker_alive", False)
+            and not end.get("error")
+            and end.get("ai", {}).get("state") == "running"
+            and not end.get("ai", {}).get("last_error")
+            and end.get("status_age_seconds", float("inf")) < 3
+            and frames > 0
+            and elapsed > 0
+        )
+        result[camera_id] = {
+            "ai_processed_frames": max(0, frames),
+            "ai_measured_seconds": max(0, elapsed),
+            "ai_processing_fps": max(0, frames) / elapsed if elapsed > 0 else 0,
+            "ai_healthy": healthy,
+        }
+    return result
 
 
 def run(config, count, mode, args):
@@ -111,6 +141,7 @@ def run(config, count, mode, args):
         else:
             logging.error("Not all camera outputs ready after %ss", args.startup_timeout)
         time.sleep(args.warmup)
+        before = service.status()
         started = time.monotonic()
         ready.set()
         while time.monotonic() - started < args.seconds:
@@ -132,6 +163,7 @@ def run(config, count, mode, args):
         clean = service.stop()
         for thread in threads:
             thread.join(7)
+    ai = ai_measurements(before, status)
     cameras = {}
     elapsed = ended - started
     for camera_id, values in samples.items():
@@ -139,6 +171,7 @@ def run(config, count, mode, args):
         latency = [v[1] for v in values]
         fps = len(values) / elapsed
         cameras[camera_id] = {
+            **ai[camera_id],
             "decoded_unique_fps": fps,
             "frames": len(values),
             "capture_to_decode_p50_ms": float(np.percentile(latency, 50)) if latency else None,
@@ -156,10 +189,13 @@ def run(config, count, mode, args):
     return {
         "valid": (
             all(event.is_set() for event in connected.values())
-            and all(v.get("worker_alive") for v in status.values())
+            and set(status) == set(samples)
+            and all(v["ai_healthy"] for v in ai.values())
+            and all(c["frames"] > 0 for c in cameras.values())
             and all(clean.values())
             and all(not t.is_alive() for t in threads)
         ),
+        "workload": "capture + YOLO tracking + events + overlay + RTSP encode/decode",
         "execution": mode,
         "camera_count": count,
         "seconds": args.seconds,
@@ -183,6 +219,12 @@ def main():
     parser.add_argument(
         "--modes", nargs="+", choices=["threads", "processes"], default=["threads", "processes"]
     )
+    parser.add_argument(
+        "--output-fps",
+        type=int,
+        default=0,
+        help="Publisher FPS cap; 0 runs without pacing (default)",
+    )
     parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--warmup", type=int, default=15)
     parser.add_argument("--startup-timeout", type=int, default=180)
@@ -195,9 +237,18 @@ def main():
     parser.add_argument("--server", default="rtsp://127.0.0.1:8554")
     parser.add_argument("--output", default="artifacts/benchmark/results.json")
     args = parser.parse_args()
-    if min(args.counts) < 1 or args.seconds < 1 or args.warmup < 0 or args.startup_timeout < 1:
-        parser.error("Counts/seconds must be positive and warmup nonnegative")
+    if (
+        args.output_fps < 0
+        or min(args.counts) < 1
+        or args.seconds < 1
+        or args.warmup < 0
+        or args.startup_timeout < 1
+    ):
+        parser.error("Counts/seconds must be positive; warmup/output-fps nonnegative")
     config = load_config(args.config)
+    from multicamera_ai.config.models import validate_model_files
+
+    validate_model_files(config)
     import torch
 
     gpu = None
@@ -220,7 +271,8 @@ def main():
         "ram_bytes": psutil.virtual_memory().total,
         "gpu": gpu,
         "models": {c.id: config.model_for(c).model_dump() for c in config.cameras},
-        "streaming": config.streaming.model_dump() | {"enabled": True, "watermark": True},
+        "streaming": config.streaming.model_dump()
+        | {"enabled": True, "watermark": True, "fps": args.output_fps},
         "input_source_override": args.source,
         "source_watermark": args.source_watermark,
         "versions": {

@@ -103,3 +103,44 @@ def test_equal_clock_samples_do_not_crash_status():
     now = time.monotonic()
     publisher._times.extend([now, now])
     assert publisher.status()["input_fps"] == 0
+
+
+def test_uncapped_output_publishes_every_available_frame(monkeypatch):
+    # A deterministic clock makes a hidden pacing wait fail immediately.
+    publisher = RTSPPublisher("cam1", "rtsp://localhost/out", Source(), StreamingConfig())
+    process = Process(blocking=False)
+    monkeypatch.setattr(publisher, "_spawn", lambda: process)
+    waits = []
+
+    def wait(delay):
+        waits.append(delay)
+        return False
+
+    monkeypatch.setattr(publisher._stop, "wait", wait)
+    source = publisher.source
+    original_wait = source.wait_for_frame
+
+    def next_frame(**kwargs):
+        if source.sequence >= 5:
+            publisher._stop.set()
+            return None
+        return original_wait(**kwargs)
+
+    source.wait_for_frame = next_frame
+    publisher._run()
+    assert publisher.status()["frames"] == 5
+    assert waits == [0] * 5
+
+
+def test_uncapped_ffmpeg_uses_valid_rate_and_wallclock(monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        "multicamera_ai.pipeline.publisher.subprocess.Popen",
+        lambda command, **kwargs: commands.append(command),
+    )
+    publisher = RTSPPublisher("cam1", "rtsp://localhost/out", Source(), StreamingConfig())
+    publisher._spawn()
+    command = commands[0]
+    assert int(command[command.index("-framerate") + 1]) > 0
+    assert command[command.index("-use_wallclock_as_timestamps") + 1] == "1"
+    assert command[command.index("-fps_mode") + 1] == "passthrough"

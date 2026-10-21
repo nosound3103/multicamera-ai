@@ -55,6 +55,8 @@ class RTSPPublisher:
 
     def _spawn(self):
         c = self.config
+        # Rawvideo requires a nominal rate. Wall-clock timestamps and passthrough
+        # preserve actual arrival timing; this value does not pace pipe writes.
         command = [
             c.ffmpeg,
             "-hide_banner",
@@ -68,7 +70,7 @@ class RTSPPublisher:
             "-video_size",
             f"{c.width}x{c.height}",
             "-framerate",
-            str(c.fps),
+            str(c.fps or 1000),
             "-use_wallclock_as_timestamps",
             "1",
             "-i",
@@ -85,7 +87,7 @@ class RTSPPublisher:
             "-pix_fmt",
             "yuv420p",
             "-g",
-            str(c.fps),
+            str(c.fps or 60),
             "-bf",
             "0",
             "-fps_mode",
@@ -194,7 +196,8 @@ class RTSPPublisher:
                             datetime.now(UTC) - packet.captured_at
                         ).total_seconds() * 1000
                         self._last_error = None
-                    deadline = max(deadline + 1 / self.config.fps, time.monotonic())
+                    if self.config.fps:
+                        deadline = max(deadline + 1 / self.config.fps, time.monotonic())
                 except (OSError, ValueError) as exc:
                     with self._lock:
                         self._last_error = type(exc).__name__

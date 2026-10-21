@@ -38,14 +38,16 @@ def replay_watermarked(args):
     captures, publishers = [], []
     try:
         for camera_id, source in args.inputs:
-            capture = CameraWorker(f"replay_{camera_id}", source, is_file=True, file_max_fps=15)
+            capture = CameraWorker(
+                f"replay_{camera_id}", source, is_file=True, file_max_fps=args.fps or None
+            )
             captures.append(capture)
             capture.start()
             publisher = RTSPPublisher(
                 f"replay_{camera_id}",
                 f"{args.server}/input_{camera_id}",
                 Adapter(capture),
-                StreamingConfig(watermark=True),
+                StreamingConfig(watermark=True, fps=args.fps),
             )
             publishers.append(publisher)
             publisher.start()
@@ -68,6 +70,9 @@ def main():
     inputs = parser.add_mutually_exclusive_group(required=True)
     inputs.add_argument("--input")
     inputs.add_argument("--config", help="File-source camera YAML; replays each enabled camera")
+    parser.add_argument(
+        "--fps", type=int, default=0, help="Output FPS cap; 0 preserves full source FPS (default)"
+    )
     parser.add_argument("--count", type=int, default=None)
     parser.add_argument("--start-index", type=int, default=1)
     parser.add_argument("--server", default="rtsp://127.0.0.1:8554")
@@ -75,8 +80,8 @@ def main():
         "--watermark", action="store_true", help="Embed capture timestamps for end-to-end probes"
     )
     args = parser.parse_args()
-    if args.start_index < 1 or (args.count is not None and args.count < 1):
-        parser.error("Count and start-index must be positive")
+    if args.fps < 0 or args.start_index < 1 or (args.count is not None and args.count < 1):
+        parser.error("Count/start-index must be positive and FPS nonnegative")
     if args.config:
         from multicamera_ai.config import ConfigError, load_config
 
@@ -121,6 +126,7 @@ def main():
                         "-1",
                         "-i",
                         source,
+                        *(["-vf", f"fps={args.fps}"] if args.fps else []),
                         "-an",
                         "-c:v",
                         "libx264",

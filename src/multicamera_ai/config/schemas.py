@@ -167,7 +167,8 @@ class RuntimeConfig(StrictModel):
 class StreamingConfig(StrictModel):
     enabled: bool = True
     ffmpeg: str = "ffmpeg"
-    fps: int = Field(default=15, ge=1, le=120)
+    # Zero removes publisher pacing; positive values explicitly cap output.
+    fps: int = Field(default=0, ge=0)
     width: int = Field(default=960, ge=640, le=3840, multiple_of=2)
     height: int = Field(default=540, ge=120, le=2160, multiple_of=2)
     write_timeout: float = Field(default=3.0, gt=0, allow_inf_nan=False)
